@@ -1,0 +1,15 @@
+# python
+.drishti/
+__pycache__/
+*.pyc
+
+# ebpf build artifacts
+*.o
+vmlinux.h
+
+# editor
+.vscode/
+.idea/
+
+# misc
+.DS_Store

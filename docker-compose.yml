@@ -1,0 +1,10 @@
+services:
+  server:
+    build: ./services/server
+    ports:
+      - "8080:8080"
+
+  client:
+    build: ./services/client
+    depends_on:
+      - server
