@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"dhrishti/resolver"
 	"encoding/binary"
 	"fmt"
 	"log"
@@ -15,6 +16,10 @@ import (
 // this struct must match the one used in tcp_connect.bpf.c
 // as this is a binary contract - if it fails, nothing else works.
 
+func init() {
+
+}
+
 type Event struct {
 	Pid   uint32
 	Comm  [16]byte
@@ -23,8 +28,12 @@ type Event struct {
 }
 
 func main() {
+	ipMap, err := resolver.BuildIPServiceMap()
+	if err != nil {
+		log.Fatal(err)
+	}
 	// load the eBPF collection spec from object file
-	spec, err := ebpf.LoadCollectionSpec("tcp_connect.bpf.o")
+	spec, err := ebpf.LoadCollectionSpec("ebpf/tcp_connect.bpf.o")
 	if err != nil {
 		log.Fatalf("loading the spec: %v", err)
 	}
@@ -52,6 +61,8 @@ func main() {
 	}
 	defer reader.Close()
 
+	seenEdges := make(map[string]bool)
+
 	for {
 		record, err := reader.Read()
 		if err != nil {
@@ -73,14 +84,37 @@ func main() {
 		ip := make(net.IP, 4)
 		binary.LittleEndian.PutUint32(ip, event.Daddr)
 		// show me the discoveries!
-		fmt.Printf(
-			"PID=%d COMM=%s DST=%s:%d\n",
-			event.Pid,
-			bytes.TrimRight(event.Comm[:], "\x00"),
-			ip,
-			event.Dport,
-		)
+		// fmt.Printf(
+		// 	"PID=%d COMM=%s DST=%s:%d\n",
+		// 	event.Pid,
+		// 	bytes.TrimRight(event.Comm[:], "\x00"),
+		// 	ip,
+		// 	event.Dport,
+		// )
+		resolvedContainer, err := resolver.ResolveContainerID(event.Pid)
+		if err != nil {
+			fmt.Println("error in resolver!", err)
+			return
+		}
+		// fmt.Println(resolvedContainer)
+		sourceService, err := resolver.ResolveServiceName(resolvedContainer)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		dstIP := ip.String()
+		dstService := ipMap[dstIP]
 
+		edgeKey := sourceService + "->" + dstService
+		if !seenEdges[edgeKey] {
+			seenEdges[edgeKey] = true
+
+			fmt.Printf(
+				"%s ─────▶ %s\n",
+				sourceService,
+				dstService,
+			)
+		}
 	}
 
 }
