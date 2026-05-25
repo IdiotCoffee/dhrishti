@@ -6,54 +6,30 @@ import (
 	"context"
 	"log"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/client"
+	// "github.com/moby/moby/api/types"
+	"github.com/moby/moby/client"
 )
 
 // making a docker client connector to connect to docker via a socket.
 
-func NewDockerClient() (*client.Client, error) {
-	return client.NewClientWithOpts(
-		client.FromEnv,
-		client.WithAPIVersionNegotiation(),
-	)
-}
-
-// type DockerInspect []struct {
-// 	NetworkSettings struct {
-// 		Networks map[string]struct {
-// 			IPAddress string `json:"IPAddress"`
-// 		} `json:"Networks"`
-// 	} `json:"NetworkSettings"`
-
-// 	Config struct {
-// 		Labels map[string]string `json:"Labels"`
-// 	} `json:"Config"`
-// }
-
-func BuildIPServiceMap() (map[string]string, error) {
-	cli, err := NewDockerClient()
-	if err != nil {
-		log.Fatalln(err)
-	}
+// function to map IP to a service name
+func (d *DockerResolver) BuildIPServiceMap() (map[string]string, error) {
+	cli := d.cli
 
 	ipMap := make(map[string]string)
-
-	// cmd := exec.Command("docker", "ps", "-q")
-	// repacing the old shell command method with actual docker client library code
+	// list the containers
 	containers, err := cli.ContainerList(
 		context.Background(),
-		types.ContainerListOptions{},
+		// types.ContainerListOptions{},
+		client.ContainerListOptions{},
 	)
-
-	// output, err := cmd.Output()
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// containerIDs := strings.Fields(string(containers))
+	if err != nil {
+		log.Printf("Error in listing containers")
+		return nil, err
+	}
+	// for each container, find the information
 	for _, c := range containers {
-		// inspectCmd := exec.Command("docker", "inspect", id)
+		// run the inspect command on each container id
 		inspect, err := cli.ContainerInspect(
 			context.Background(),
 			c.ID,
@@ -62,25 +38,9 @@ func BuildIPServiceMap() (map[string]string, error) {
 			log.Println(err)
 			continue
 		}
-
-		// inspectOutput, err := inspectCmd.Output()
-		// if err != nil {
-		// 	continue
-		// }
-
-		// var data DockerInspect
-
-		// err = json.Unmarshal(inspect, &data)
-		// if err != nil {
-		// 	continue
-		// }
-
-		// if len(data) == 0 {
-		// 	continue
-		// }
-
+		// check for all IP addresses
 		service := inspect.Config.Labels["com.docker.compose.service"]
-
+		// map ip address to a non-empty service.
 		for _, network := range inspect.NetworkSettings.Networks {
 			ip := network.IPAddress
 
