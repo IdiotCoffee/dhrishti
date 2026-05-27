@@ -52,5 +52,20 @@ type EdgeResponse struct {
 
 	AverageDurationMs int64 `json:"average_duration_ms"`
 
+	/*
+		Rolling operational metrics.
+
+		These represent:
+		recent runtime behavior,
+		NOT lifetime aggregates.
+	*/
+	RequestsPerSecond float64 `json:"requests_per_second"`
+
+	RecentAverageLatencyMs int64 `json:"recent_average_latency_ms"`
+
+	P95LatencyMs int64 `json:"p95_latency_ms"`
+
+	FailureRate float64 `json:"failure_rate"`
+
 	LastSeen string `json:"last_seen"`
 }

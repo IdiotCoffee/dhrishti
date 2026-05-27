@@ -87,6 +87,19 @@ func BuildGraphResponse(
 					for visualization systems.
 				*/
 				AverageDurationMs: edge.AverageDuration.Milliseconds(),
+				/*
+					Live operational metrics.
+
+					These represent rolling
+					recent behavior.
+				*/
+				RequestsPerSecond: edge.RequestsPerSecond,
+
+				RecentAverageLatencyMs: edge.RecentAverageLatency.Milliseconds(),
+
+				P95LatencyMs: edge.P95Latency.Milliseconds(),
+
+				FailureRate: edge.FailureRate,
 
 				/*
 					RFC3339 is stable and frontend-safe.

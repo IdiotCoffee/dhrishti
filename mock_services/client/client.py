@@ -4,29 +4,29 @@ import time
 import requests
 
 """
-Synthetic traffic generator.
+Traffic generator — burst + idle.
 
-This continuously drives the system.
-
-Important:
-observability systems need workload.
-Without runtime behavior:
-there is nothing to observe.
+Each gateway request holds client→gateway open for several seconds while
+downstream services sleep (auth/inventory/payment). That makes active_connections
+visible on the graph between WebSocket snapshots.
 """
 
+GATEWAY_URL = "http://gateway:8080/"
 
 while True:
-    try:
-        response = requests.get(
-            "http://gateway:8080/",
-            headers={"Connection": "close"},
-            timeout=5,
-        )
+    idle_seconds = random.uniform(15, 25)
+    print(f"[client] idle {idle_seconds:.1f}s")
+    time.sleep(idle_seconds)
 
-        print(response.json())
+    burst_size = random.randint(1, 2)
+    print(f"[client] burst x{burst_size}")
 
-    except Exception as e:
-        print("request failed:", e)
+    for i in range(burst_size):
+        try:
+            response = requests.get(GATEWAY_URL, timeout=30)
+            print(f"  [{i + 1}/{burst_size}] status={response.status_code}")
+        except Exception as e:
+            print(f"  [{i + 1}/{burst_size}] failed:", e)
 
-    # variable request spacing
-    time.sleep(random.uniform(1, 3))
+        if i < burst_size - 1:
+            time.sleep(random.uniform(1.0, 2.0))

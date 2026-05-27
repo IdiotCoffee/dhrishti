@@ -6,33 +6,19 @@ from flask import Flask
 app = Flask(__name__)
 
 """
-Inventory service.
-
-This intentionally introduces:
-- random latency,
-- intermittent failures.
-
-Why?
-
-Because observability becomes interesting only when
-systems behave unpredictably.
+Inventory — slow responses + occasional failures for observability demos.
 """
 
 
 @app.route("/inventory")
 def inventory():
+    time.sleep(random.uniform(1.0, 2.5))
 
-    # random latency spike
-    latency = random.uniform(0.05, 0.8)
-    time.sleep(latency)
-
-    # intermittent failure
-    if random.random() < 0.1:
+    if random.random() < 0.08:
         return {"error": "inventory timeout"}, 500
 
     return {
         "stock": random.randint(1, 50),
-        "latency": latency,
     }
 
 

@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"sort"
 	"time"
 
 	"dhrishti/types"
@@ -37,33 +38,179 @@ func InferFailure(flow *types.ConnectionState) {
 	}
 }
 
-// UpdateEdgeMetrics aggregates completed flow behavior into graph edges.
-func UpdateEdgeMetrics(edge *types.Edge, flow *types.ConnectionState) {
-	edge.LastSeen = time.Now()
+/*
+UpdateEdgeMetrics aggregates completed
+flow behavior into dependency edge state.
 
-	// Aggregate total observed duration.
+This function is now becoming:
+a temporal observability engine.
+
+VERY IMPORTANT:
+
+We maintain BOTH:
+- cumulative historical metrics
+- rolling operational metrics
+
+These solve different observability problems.
+*/
+func UpdateEdgeMetrics(
+	edge *types.Edge,
+	flow *types.ConnectionState,
+) {
+
+	now := time.Now()
+
+	edge.LastSeen = now
+
+	/*
+		Aggregate cumulative lifetime metrics.
+	*/
+
 	edge.TotalDuration += flow.Duration()
 
-	// Recompute rolling average duration.
-	// Only completed flows contribute
-	// to duration metrics.
 	edge.CompletedConnections++
 
 	if edge.CompletedConnections > 0 {
+
 		edge.AverageDuration =
 			edge.TotalDuration /
 				time.Duration(edge.CompletedConnections)
 	}
 
-	// Aggregate failed flow count.
 	if flow.Failed {
 		edge.FailedConnections++
 	}
 
-	// Aggregate short-lived flow count.
 	if flow.ShortLived {
 		edge.ShortLivedConnections++
 	}
+
+	/*
+		Convert completed flow into
+		a rolling temporal sample.
+	*/
+	sample := types.FlowSample{
+		Timestamp: now,
+		Duration:  flow.Duration(),
+		Failed:    flow.Failed,
+	}
+
+	edge.RecentFlows =
+		append(edge.RecentFlows, sample)
+
+	/*
+		Trim rolling window.
+
+		We intentionally keep ONLY
+		recent operational behavior.
+
+		This prevents:
+		- unbounded memory growth
+		- stale observability state
+		- historical dilution
+
+		Current window:
+			last 30 seconds
+	*/
+	windowStart :=
+		now.Add(-30 * time.Second)
+
+	filtered :=
+		make([]types.FlowSample, 0)
+
+	for _, sample := range edge.RecentFlows {
+
+		if sample.Timestamp.After(windowStart) {
+
+			filtered =
+				append(filtered, sample)
+		}
+	}
+
+	edge.RecentFlows = filtered
+
+	/*
+		Derive live operational metrics.
+
+		These metrics now answer:
+
+			"What is happening NOW?"
+
+		rather than:
+
+			"What happened historically?"
+	*/
+
+	recentCount :=
+		len(edge.RecentFlows)
+
+	if recentCount == 0 {
+		return
+	}
+
+	/*
+		Requests/sec over rolling window.
+	*/
+	edge.RequestsPerSecond =
+		float64(recentCount) / 30.0
+
+	/*
+		Rolling latency metrics.
+	*/
+	var totalLatency time.Duration
+
+	failedCount := 0
+
+	latencies :=
+		make([]time.Duration, 0)
+
+	for _, sample := range edge.RecentFlows {
+
+		totalLatency += sample.Duration
+
+		latencies =
+			append(latencies, sample.Duration)
+
+		if sample.Failed {
+			failedCount++
+		}
+	}
+
+	/*
+		Recent rolling average latency.
+	*/
+	edge.RecentAverageLatency =
+		totalLatency / time.Duration(recentCount)
+
+	/*
+		Rolling failure rate.
+	*/
+	edge.FailureRate =
+		float64(failedCount) /
+			float64(recentCount)
+
+	/*
+		Compute p95 latency.
+
+		P95 reveals:
+		tail latency behavior.
+
+		Extremely important in:
+		distributed systems observability.
+	*/
+	sort.Slice(
+		latencies,
+
+		func(i, j int) bool {
+			return latencies[i] < latencies[j]
+		},
+	)
+
+	p95Index :=
+		int(float64(len(latencies)-1) * 0.95)
+
+	edge.P95Latency =
+		latencies[p95Index]
 }
 
 /*

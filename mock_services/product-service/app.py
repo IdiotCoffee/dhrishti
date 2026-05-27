@@ -2,36 +2,37 @@ import random
 import time
 
 import requests
-from flask import Flask
+from flask import Flask, jsonify
 
 app = Flask(__name__)
-
-"""
-Product service.
-
-Depends on inventory service.
-
-Creates chained service dependencies:
-
-gateway -> product -> inventory
-"""
 
 
 @app.route("/product")
 def product():
+    time.sleep(random.uniform(0.3, 0.6))
 
-    time.sleep(random.uniform(0.1, 0.3))
+    try:
+        inventory = requests.get(
+            "http://inventory-service:8080/inventory",
+            timeout=5,
+        )
+        inv_body = inventory.json()
+    except requests.exceptions.RequestException as e:
+        return jsonify({
+            "product": "laptop",
+            "inventory": {"error": str(e)},
+        }), 502
 
-    inventory = requests.get(
-        "http://inventory-service:8080/inventory",
-        headers={"Connection": "close"},
-        timeout=2,
-    )
+    if inventory.status_code != 200:
+        return jsonify({
+            "product": "laptop",
+            "inventory": inv_body,
+        }), inventory.status_code
 
-    return {
+    return jsonify({
         "product": "laptop",
-        "inventory": inventory.json(),
-    }
+        "inventory": inv_body,
+    })
 
 
 if __name__ == "__main__":

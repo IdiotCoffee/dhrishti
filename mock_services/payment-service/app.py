@@ -6,25 +6,15 @@ from flask import Flask
 app = Flask(__name__)
 
 """
-Payment service.
-
-Simulates:
-- external dependency,
-- unstable latency,
-- transient failures.
-
-Excellent observability target.
+Payment — simulates a slow external provider; connection stays open for the sleep.
 """
 
 
 @app.route("/pay")
 def pay():
+    time.sleep(random.uniform(1.0, 2.0))
 
-    # simulate slow external payment provider
-    time.sleep(random.uniform(0.2, 1.5))
-
-    # intermittent payment failure
-    if random.random() < 0.15:
+    if random.random() < 0.1:
         return {"status": "payment-failed"}, 500
 
     return {"status": "success"}

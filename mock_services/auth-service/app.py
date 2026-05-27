@@ -6,20 +6,14 @@ from flask import Flask
 app = Flask(__name__)
 
 """
-Auth service.
-
-Simulates:
-- token validation,
-- session checks,
-- lightweight CPU work.
+Auth service — holds the TCP connection open while "validating"
+so the observability graph can show active_connections on the edge.
 """
 
 
 @app.route("/auth")
 def auth():
-
-    # realistic small latency
-    time.sleep(random.uniform(0.05, 0.2))
+    time.sleep(random.uniform(1.0, 2.0))
 
     return {
         "authenticated": True,

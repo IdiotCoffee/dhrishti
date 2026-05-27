@@ -1,52 +1,52 @@
+import time
+
 import requests
-from flask import Flask
+from flask import Flask, jsonify
 
 app = Flask(__name__)
 
 """
-Order service.
-
-Creates multi-dependency fanout:
-
-order
- ├── inventory
- └── payment
-
-Also introduces retry behavior.
+Order fans out to inventory then payment (with one retry).
+Sequential slow downstream calls keep multiple edges active at once.
 """
 
 
 @app.route("/order")
 def order():
+    result = {"inventory": None, "payment": None}
 
-    inventory = requests.get(
-        "http://inventory-service:8080/inventory",
-        headers={"Connection": "close"},
-        timeout=2,
-    )
+    try:
+        inventory = requests.get(
+            "http://inventory-service:8080/inventory",
+            timeout=5,
+        )
+        result["inventory"] = {
+            "status": inventory.status_code,
+            "body": inventory.json(),
+        }
+    except requests.exceptions.RequestException as e:
+        result["inventory"] = {"status": 502, "error": str(e)}
 
     payment_response = None
-
-    # retry payment once
     for _ in range(2):
-        payment = requests.get(
-            "http://payment-service:8080/pay",
-            headers={"Connection": "close"},
-            timeout=3,
-        )
+        try:
+            payment = requests.get(
+                "http://payment-service:8080/pay",
+                timeout=5,
+            )
+            payment_response = {
+                "status": payment.status_code,
+                "body": payment.json(),
+            }
+            if payment.status_code == 200:
+                break
+        except requests.exceptions.RequestException as e:
+            payment_response = {"status": 502, "error": str(e)}
 
-        payment_response = payment.json()
+        time.sleep(0.2)
 
-        if payment.status_code == 200:
-            break
-
-        # retry delay
-        time.sleep(0.3)
-
-    return {
-        "inventory": inventory.json(),
-        "payment": payment_response,
-    }
+    result["payment"] = payment_response
+    return jsonify(result)
 
 
 if __name__ == "__main__":

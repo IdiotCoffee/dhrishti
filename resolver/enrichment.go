@@ -15,7 +15,6 @@ type EnrichedRuntimeEvent struct {
 
 func (d *DockerResolver) EnrichEvent(
 	event types.RuntimeEvent,
-	ipMap map[string]string,
 ) (*EnrichedRuntimeEvent, error) {
 
 	// containerID, err := ResolveContainerID(event.PID)
@@ -63,11 +62,22 @@ func (d *DockerResolver) EnrichEvent(
 		lookupIP = event.SourceIP
 	}
 
-	dstService, exists := ipMap[lookupIP]
+	/*
+		Resolve destination identity
+		from live runtime cache.
 
-	if !exists {
-		dstService = "external"
-	}
+		IMPORTANT:
+
+		Identity resolution is now:
+		dynamic runtime state.
+
+		NOT static startup metadata.
+	*/
+	dstService := d.ResolveIP(lookupIP)
+
+	// if !exists {
+	// 	dstService = "external"
+	// }
 
 	return &EnrichedRuntimeEvent{
 		RuntimeEvent: event,

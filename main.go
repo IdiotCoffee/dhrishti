@@ -34,18 +34,22 @@ func main() {
 	}
 
 	/*
-		Build runtime IP -> service mapping.
+		Continuously refresh runtime identity.
 
-		Example:
-			172.19.0.4 -> payment-service
+		This allows:
+		- dynamic container discovery
+		- runtime topology evolution
+		- container restart reconciliation
+
+		VERY IMPORTANT:
+
+		Distributed systems are dynamic runtime environments.
+
+		Identity must evolve continuously.
 	*/
-	ipMap, err := dockerResolver.BuildIPServiceMap()
-	if err != nil {
-		log.Fatalf(
-			"building IP service map: %v",
-			err,
-		)
-	}
+	dockerResolver.StartRefreshLoop(
+		5 * time.Second,
+	)
 
 	/*
 		Live topology graph.
@@ -219,7 +223,6 @@ func main() {
 		connectProbe.Reader,
 
 		dockerResolver,
-		ipMap,
 
 		func(event *resolver.EnrichedRuntimeEvent) {
 
@@ -263,22 +266,12 @@ func main() {
 		closeProbe.Reader,
 
 		dockerResolver,
-		ipMap,
-
 		func(event *resolver.EnrichedRuntimeEvent) {
 
 			/*
 				Print enriched lifecycle event.
 			*/
 			loader.PrintEnrichedRuntimeEvent(event)
-
-			/*
-				Update graph active connection state.
-			*/
-			graph.RecordClose(
-				event.SourceService,
-				event.DestinationService,
-			)
 
 			/*
 				Finalize runtime flow.
@@ -305,7 +298,6 @@ func main() {
 		acceptProbe.Reader,
 
 		dockerResolver,
-		ipMap,
 
 		func(event *resolver.EnrichedRuntimeEvent) {
 

@@ -3,6 +3,7 @@ package api
 import (
 	"log"
 	"net/http"
+	"time"
 
 	"dhrishti/types"
 )
@@ -35,13 +36,17 @@ func StartServer(
 		Graph: graph,
 	}
 
+	wsGraphHandler := &WSGraphHandler{
+		Graph:    graph,
+		Interval: 100 * time.Millisecond,
+	}
+
 	/*
 		Register HTTP routes.
 	*/
-	http.Handle(
-		"/graph",
-		graphHandler,
-	)
+	mux := http.NewServeMux()
+	mux.Handle("/graph", graphHandler)
+	mux.Handle("/ws", wsGraphHandler)
 
 	log.Println(
 		"observability API listening on :8080",
@@ -56,7 +61,7 @@ func StartServer(
 	*/
 	err := http.ListenAndServe(
 		":8090",
-		nil,
+		mux,
 	)
 
 	if err != nil {

@@ -7,6 +7,39 @@ import (
 )
 
 /*
+FlowSample represents ONE completed
+connection lifecycle sample.
+
+This becomes the foundation for:
+- rolling latency windows
+- requests/sec
+- p95 calculations
+- temporal observability
+
+IMPORTANT:
+
+This is intentionally lightweight.
+
+We do NOT store:
+- payloads
+- packets
+- full traces
+
+Only operationally useful metrics.
+*/
+type FlowSample struct {
+
+	// When this flow completed.
+	Timestamp time.Time
+
+	// Total observed connection lifetime.
+	Duration time.Duration
+
+	// Whether this lifecycle failed.
+	Failed bool
+}
+
+/*
 Graph represents the live runtime topology state
 of the system.
 
@@ -147,6 +180,41 @@ type Edge struct {
 	// average durations should ONLY use
 	// finalized connection lifecycles.
 	CompletedConnections int
+	/*
+		Recent completed flow samples.
+
+		This powers:
+		- rolling latency metrics
+		- RPS
+		- failure rate
+		- p95 latency
+
+		IMPORTANT:
+
+		We intentionally keep this in-memory.
+
+		This is:
+		operational observability state,
+		NOT historical persistence.
+	*/
+	RecentFlows []FlowSample
+
+	/*
+		Rolling operational metrics.
+
+		These represent:
+		recent runtime behavior.
+
+		Unlike cumulative metrics,
+		these continuously evolve over time.
+	*/
+	RequestsPerSecond float64
+
+	RecentAverageLatency time.Duration
+
+	P95Latency time.Duration
+
+	FailureRate float64
 }
 
 /*

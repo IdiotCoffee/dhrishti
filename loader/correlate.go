@@ -126,6 +126,15 @@ func HandleClose(
 		}
 	}
 
+	/*
+		CLOSE is observed from both client and server kernels.
+		Process each flow once — otherwise active counts and
+		rolling metrics double-count the same lifecycle.
+	*/
+	if flow.Closed {
+		return
+	}
+
 	// Mark runtime flow as closed.
 	flow.Closed = true
 	flow.CloseTime = time.Now()
@@ -156,8 +165,14 @@ func HandleClose(
 
 	edge, exists := graph.Edges[edgeKey]
 	if exists {
-		// Aggregate behavioral metrics
-		// into dependency edge state.
+		/*
+			Decrement using canonical flow direction (client -> server),
+			not the reversed CLOSE event's source/destination labels.
+		*/
+		if edge.ActiveConnections > 0 {
+			edge.ActiveConnections--
+		}
+
 		UpdateEdgeMetrics(edge, flow)
 	}
 

@@ -33,13 +33,21 @@ function formatFailRate(rate) {
 }
 
 /*
+Dashed "live" animation only when a socket is open right now.
+Longer mock request handlers keep active_connections > 0 long enough to see.
+*/
+function isEdgeHot(edge) {
+  return (edge.active_connections ?? 0) > 0;
+}
+
+/*
 Edge color priority: unhealthy (fail rate) > tail latency (p95) > live traffic > idle.
-Matches how on-call triage works: errors first, then slowness, then what's hot.
 */
 function edgeLineColor(edge) {
   if (edge.failure_rate > 0.5) return "#ef4444";
   if (edge.p95_latency_ms > 1000) return "#f97316";
-  if (edge.active_connections > 0) return "#22c55e";
+  if ((edge.active_connections ?? 0) > 0) return "#22c55e";
+  if ((edge.requests_per_second ?? 0) > 0) return "#84cc16";
   return "#6b7280";
 }
 
@@ -103,7 +111,7 @@ function graphToElements(graph) {
   });
 
   graph.edges.forEach((edge) => {
-    const active = (edge.active_connections ?? 0) > 0;
+    const hot = isEdgeHot(edge);
     const rps = edge.requests_per_second ?? 0;
 
     elements.push({
@@ -115,8 +123,9 @@ function graphToElements(graph) {
         tooltip: edgeTooltip(edge),
         edgeColor: edgeLineColor(edge),
         edgeWidth: edgeWidth(rps),
+        hot: hot ? "yes" : "no",
       },
-      classes: active ? "active-edge" : "",
+      classes: hot ? "active-edge" : "idle-edge",
     });
   });
 
@@ -225,7 +234,11 @@ function Legend() {
       </div>
       <div style={row}>
         <span style={swatch("#22c55e", true)} />
-        <span>Active connections</span>
+        <span>Open connection (active)</span>
+      </div>
+      <div style={row}>
+        <span style={swatch("#84cc16")} />
+        <span>Recent traffic (RPS &gt; 0)</span>
       </div>
       <div style={row}>
         <span style={swatch("#6b7280")} />
@@ -308,6 +321,39 @@ export default function GraphView({ graph }) {
   const [tooltip, setTooltip] = useState(null);
 
   const elements = useMemo(() => graphToElements(graph), [graph]);
+
+  /*
+  react-cytoscapejs can leave stale edge classes between polls.
+  Sync color, width, and hot/idle class directly on each graph update.
+  */
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+
+    graph.edges.forEach((edge) => {
+      const ele = cy.getElementById(stableEdgeId(edge));
+      if (ele.empty()) return;
+
+      const hot = isEdgeHot(edge);
+      const rps = edge.requests_per_second ?? 0;
+
+      ele.data({
+        label: edgeLabel(edge),
+        tooltip: edgeTooltip(edge),
+        edgeColor: edgeLineColor(edge),
+        edgeWidth: edgeWidth(rps),
+        hot: hot ? "yes" : "no",
+      });
+
+      if (hot) {
+        ele.addClass("active-edge");
+        ele.removeClass("idle-edge");
+      } else {
+        ele.removeClass("active-edge");
+        ele.addClass("idle-edge");
+      }
+    });
+  }, [graph]);
 
   useEffect(() => {
     const cy = cyRef.current;

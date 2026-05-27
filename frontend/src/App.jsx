@@ -14,13 +14,20 @@ export default function App() {
   });
 
   /*
-  Poll runtime graph every 2 seconds.
+  Prefer WebSocket snapshots for snappy edge state.
 
-  Very intentionally simple.
+  Observability is about reaction time:
+  when a connection closes/fails/recover, the UI should reflect immediately.
 
-  We do NOT need WebSockets yet.
+  We keep polling as a fallback for environments where WS is unavailable.
   */
   useEffect(() => {
+    const wsUrl = "ws://localhost:8090/ws";
+    const pollingMs = 2000;
+    let ws = null;
+    let pollInterval = null;
+    const stoppedRef = { stopped: false };
+
     async function loadGraph() {
       try {
         const data = await fetchGraph();
@@ -31,17 +38,45 @@ export default function App() {
       }
     }
 
-    /*
-    Initial load.
-    */
-    loadGraph();
+    const startPolling = () => {
+      if (pollInterval != null) return;
+      loadGraph();
+      pollInterval = setInterval(loadGraph, pollingMs);
+    };
 
-    /*
-    Periodic refresh.
-    */
-    const interval = setInterval(loadGraph, 2000);
+    try {
+      ws = new WebSocket(wsUrl);
 
-    return () => clearInterval(interval);
+      ws.onopen = () => {
+        console.info("[dhrishti] graph WebSocket connected");
+      };
+
+      ws.onmessage = (evt) => {
+        try {
+          const data = JSON.parse(evt.data);
+          setGraph(data);
+        } catch (e) {
+          // If messages are malformed, fall back to polling.
+          startPolling();
+        }
+      };
+
+      ws.onerror = () => {
+        startPolling();
+      };
+
+      ws.onclose = () => {
+        if (!stoppedRef.stopped) startPolling();
+      };
+    } catch {
+      startPolling();
+    }
+
+    return () => {
+      stoppedRef.stopped = true;
+      if (ws) ws.close();
+      if (pollInterval) clearInterval(pollInterval);
+    };
   }, []);
 
   return (

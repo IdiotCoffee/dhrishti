@@ -1,57 +1,54 @@
 import random
 
 import requests
-from flask import Flask
+from flask import Flask, jsonify
 
 app = Flask(__name__)
 
 """
-Gateway service.
-
-Acts like:
-- ingress layer,
-- API aggregation service,
-- request fanout node.
-
-This creates multiple downstream dependencies
-from a single incoming request.
+Gateway fans out sequentially — client→gateway stays open for the full fanout.
 """
+
+
+def fetch_json(name, url, timeout):
+    try:
+        resp = requests.get(url, timeout=timeout)
+        try:
+            body = resp.json()
+        except ValueError:
+            body = {"raw": resp.text[:200]}
+
+        return {"status": resp.status_code, "body": body}
+    except requests.exceptions.Timeout:
+        return {"status": 504, "error": f"{name} timed out"}
+    except requests.exceptions.RequestException as e:
+        return {"status": 502, "error": f"{name} unreachable: {e}"}
 
 
 @app.route("/")
 def home():
-
     responses = {}
 
-    # auth validation
-    auth = requests.get(
+    responses["auth"] = fetch_json(
+        "auth-service",
         "http://auth-service:8080/auth",
-        headers={"Connection": "close"},
-        timeout=2,
+        timeout=5,
     )
 
-    responses["auth"] = auth.json()
-
-    # product lookup
-    product = requests.get(
+    responses["product"] = fetch_json(
+        "product-service",
         "http://product-service:8080/product",
-        headers={"Connection": "close"},
-        timeout=2,
+        timeout=8,
     )
 
-    responses["product"] = product.json()
-
-    # randomly simulate order creation
     if random.random() < 0.7:
-        order = requests.get(
+        responses["order"] = fetch_json(
+            "order-service",
             "http://order-service:8080/order",
-            headers={"Connection": "close"},
-            timeout=3,
+            timeout=15,
         )
 
-        responses["order"] = order.json()
-
-    return responses
+    return jsonify(responses)
 
 
 if __name__ == "__main__":
