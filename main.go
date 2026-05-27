@@ -4,6 +4,7 @@ import (
 	"log"
 	"time"
 
+	"dhrishti/api"
 	"dhrishti/loader"
 	"dhrishti/resolver"
 	"dhrishti/types"
@@ -53,7 +54,21 @@ func main() {
 		service dependency structure.
 	*/
 	graph := types.NewGraph()
+	/*
+		Start observability API server.
 
+		This exposes runtime graph state externally.
+
+		Current endpoint:
+
+			GET /graph
+
+		Future:
+		- /flows
+		- /metrics
+		- /ws
+	*/
+	go api.StartServer(graph)
 	/*
 		Runtime flow tracker.
 
