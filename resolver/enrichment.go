@@ -44,8 +44,26 @@ func (d *DockerResolver) EnrichEvent(
 		}
 	}
 
-	// dstService := ipMap[event.DestinationIP]
-	dstService, exists := ipMap[event.DestinationIP]
+	lookupIP := event.DestinationIP
+
+	// ACCEPT events are observed from the
+	// server kernel perspective.
+	//
+	// That means:
+	//
+	// source = server
+	// destination = client
+	//
+	// But semantically we want:
+	// client -> server
+	//
+	// So for ACCEPT events,
+	// the service identity lives on SourceIP.
+	if event.EventType == "accept" {
+		lookupIP = event.SourceIP
+	}
+
+	dstService, exists := ipMap[lookupIP]
 
 	if !exists {
 		dstService = "external"

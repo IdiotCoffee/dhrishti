@@ -1,11 +1,10 @@
 package loader
 
 import (
-	"log"
-	"time"
-
 	"dhrishti/resolver"
 	"dhrishti/types"
+	"log"
+	"time"
 )
 
 /*
@@ -48,6 +47,10 @@ func HandleConnect(
 		DestinationService: event.DestinationService,
 
 		ConnectTime: time.Now(),
+
+		// Tracks latest lifecycle activity.
+		// Used for flow expiration cleanup.
+		LastUpdated: time.Now(),
 	}
 }
 
@@ -77,6 +80,9 @@ func HandleAccept(
 
 	flow.Accepted = true
 	flow.AcceptTime = time.Now()
+
+	// Refresh runtime liveness timestamp.
+	flow.LastUpdated = time.Now()
 }
 
 /*
@@ -84,12 +90,23 @@ HandleClose finalizes runtime connection state.
 
 Computes:
 - duration
-- closure semantics
+- failure semantics
+- behavioral edge metrics
 */
 func HandleClose(
 	tracker *types.FlowTracker,
+	graph *types.Graph,
 	event *resolver.EnrichedRuntimeEvent,
 ) {
+
+	// Close events may arrive from either side:
+	//
+	// client -> server
+	// OR
+	// server -> client
+	//
+	// So we first try direct lookup,
+	// then reversed lookup.
 
 	key := BuildFlowKey(event)
 
@@ -97,15 +114,54 @@ func HandleClose(
 	defer tracker.Mu.Unlock()
 
 	flow, exists := tracker.Flows[key]
+
+	// If direct lookup fails,
+	// try reversed flow identity.
 	if !exists {
-		return
+		key = key.Reverse()
+
+		flow, exists = tracker.Flows[key]
+		if !exists {
+			return
+		}
 	}
 
+	// Mark runtime flow as closed.
 	flow.Closed = true
 	flow.CloseTime = time.Now()
 
-	flow.Duration =
-		flow.CloseTime.Sub(flow.ConnectTime)
+	// Refresh liveness timestamp.
+	//
+	// Important for cleanup expiration logic.
+	flow.LastUpdated = time.Now()
+
+	// Derive behavioral semantics.
+	//
+	// Example:
+	// - failed handshake
+	// - short-lived flow
+	InferFailure(flow)
+
+	// Lookup graph edge representing:
+	//
+	// source_service -> destination_service
+	edgeKey := types.EdgeKey{
+		Source:      flow.SourceService,
+		Destination: flow.DestinationService,
+	}
+
+	// IMPORTANT:
+	// graph state is a separate ownership domain.
+	graph.Mu.Lock()
+
+	edge, exists := graph.Edges[edgeKey]
+	if exists {
+		// Aggregate behavioral metrics
+		// into dependency edge state.
+		UpdateEdgeMetrics(edge, flow)
+	}
+
+	graph.Mu.Unlock()
 }
 
 /*
@@ -131,7 +187,7 @@ func PrintFlows(
 			flow.Accepted,
 			flow.Closed,
 
-			flow.Duration,
+			flow.Duration(),
 		)
 	}
 }

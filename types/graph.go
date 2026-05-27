@@ -42,18 +42,27 @@ type Graph struct {
 		- many readers simultaneously
 		- only one writer at a time
 	*/
-	mu sync.RWMutex
+	Mu sync.RWMutex
 
 	/*
 		Edges stores all discovered service relationships.
 
-		Key format:
-			client->server
+		Key:
+			stable directional dependency identity
 
 		Value:
 			runtime edge metadata
 	*/
-	Edges map[string]*Edge
+	Edges map[EdgeKey]*Edge
+}
+
+/*
+EdgeKey uniquely identifies
+a service dependency edge.
+*/
+type EdgeKey struct {
+	Source      string
+	Destination string
 }
 
 /*
@@ -68,6 +77,7 @@ It now stores:
 - historical traffic volume
 - current live activity
 - temporal metadata
+- behavioral metrics
 
 This is the beginning of:
 behavioral observability.
@@ -118,6 +128,25 @@ type Edge struct {
 	*/
 	FirstSeen time.Time
 	LastSeen  time.Time
+
+	// Total cumulative duration of all completed flows.
+	TotalDuration time.Duration
+
+	// Average observed connection duration.
+	AverageDuration time.Duration
+
+	// Number of failed connection attempts.
+	FailedConnections int
+
+	// Number of extremely short-lived flows.
+	ShortLivedConnections int
+
+	// Number of fully completed flows.
+	//
+	// Important:
+	// average durations should ONLY use
+	// finalized connection lifecycles.
+	CompletedConnections int
 }
 
 /*
@@ -128,7 +157,7 @@ the central runtime topology model.
 */
 func NewGraph() *Graph {
 	return &Graph{
-		Edges: make(map[string]*Edge),
+		Edges: make(map[EdgeKey]*Edge),
 	}
 }
 
@@ -158,7 +187,7 @@ func (g *Graph) RecordConnect(
 
 		We are mutating shared state.
 	*/
-	g.mu.Lock()
+	g.Mu.Lock()
 
 	/*
 		Always unlock even if function exits early.
@@ -166,19 +195,21 @@ func (g *Graph) RecordConnect(
 		defer is extremely important in systems code
 		to avoid deadlocks/resource leaks.
 	*/
-	defer g.mu.Unlock()
+	defer g.Mu.Unlock()
 
 	/*
 		Stable edge identity.
 
-		Later this may evolve into:
-		- struct keys
-		- flow keys
-		- directional graph IDs
+		Typed identity is MUCH safer than:
+			"source->destination"
 
-		But string key is perfectly fine now.
+		This becomes extremely important
+		as runtime semantics evolve.
 	*/
-	key := source + "->" + destination
+	key := EdgeKey{
+		Source:      source,
+		Destination: destination,
+	}
 
 	now := time.Now()
 
@@ -252,10 +283,13 @@ func (g *Graph) RecordClose(
 	/*
 		Write lock because we mutate edge state.
 	*/
-	g.mu.Lock()
-	defer g.mu.Unlock()
+	g.Mu.Lock()
+	defer g.Mu.Unlock()
 
-	key := source + "->" + destination
+	key := EdgeKey{
+		Source:      source,
+		Destination: destination,
+	}
 
 	/*
 		If edge doesn't exist:
@@ -314,8 +348,8 @@ func (g *Graph) Print() {
 
 		No mutation occurs here.
 	*/
-	g.mu.RLock()
-	defer g.mu.RUnlock()
+	g.Mu.RLock()
+	defer g.Mu.RUnlock()
 
 	fmt.Println("\n=== Live Service Graph ===")
 
@@ -325,13 +359,18 @@ func (g *Graph) Print() {
 	for _, edge := range g.Edges {
 
 		fmt.Printf(
-			"%s ─────▶ %s | total=%d | active=%d | last_seen=%s\n",
+			"%s ─────▶ %s | total=%d | active=%d | avg=%s | failed=%d | short_lived=%d | last_seen=%s\n",
 
 			edge.Source,
 			edge.Destination,
 
 			edge.ConnectionCount,
 			edge.ActiveConnections,
+
+			edge.AverageDuration,
+
+			edge.FailedConnections,
+			edge.ShortLivedConnections,
 
 			edge.LastSeen.Format(time.RFC3339),
 		)

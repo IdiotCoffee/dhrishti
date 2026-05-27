@@ -36,12 +36,19 @@ type ConnectionState struct {
 	Accepted bool
 	Closed   bool
 
-	/*
-		Computed duration.
+	// Last time any event updated this flow.
+	// Used for cleanup and liveness tracking.
+	LastUpdated time.Time
 
-		Computed during CLOSE.
-	*/
-	Duration time.Duration
+	// Whether this flow represents a failed connection lifecycle.
+	Failed bool
+
+	// Human-readable reason explaining why the flow failed.
+	FailureReason string
+
+	// Whether the connection was extremely short-lived.
+	// Useful for retry storm detection later.
+	ShortLived bool
 }
 
 /*
@@ -69,4 +76,40 @@ func NewFlowTracker() *FlowTracker {
 	return &FlowTracker{
 		Flows: make(map[FlowKey]*ConnectionState),
 	}
+}
+
+/*
+Duration computes total runtime lifetime
+of the flow dynamically.
+
+IMPORTANT:
+
+We intentionally DO NOT store duration
+as a separate field.
+
+Why?
+
+Because duration is derived state:
+
+	close_time - connect_time
+
+Storing both timestamps AND duration
+creates redundant state and risks
+inconsistency bugs.
+
+Instead:
+timestamps remain canonical truth,
+and duration is derived when needed.
+*/
+func (c *ConnectionState) Duration() time.Duration {
+
+	// Flow still active.
+	//
+	// Duration grows dynamically.
+	if c.CloseTime.IsZero() {
+		return time.Since(c.ConnectTime)
+	}
+
+	// Closed flow.
+	return c.CloseTime.Sub(c.ConnectTime)
 }

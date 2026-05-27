@@ -28,4 +28,6 @@ type RuntimeEvent struct {
 	PID uint32
 
 	Metadata map[string]string
+
+	EventType string
 }

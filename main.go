@@ -73,11 +73,50 @@ func main() {
 		This visualizes:
 		service-to-service topology.
 	*/
+	// Start background cleanup subsystem.
+	//
+	// Closed flows older than 30 seconds
+	// will be removed automatically.
+	loader.StartFlowCleanupLoop(
+		tracker,
+		30*time.Second,
+	)
 	go func() {
 
 		for {
 
 			graph.Print()
+
+			time.Sleep(5 * time.Second)
+		}
+	}()
+
+	/*
+		Background semantic inference loop.
+
+		This periodically scans runtime flows
+		for incomplete lifecycle state.
+
+		Example:
+
+				connect observed
+				but no accept/close ever arrives
+
+		This often indicates:
+		- timeout
+		- dropped telemetry
+		- failed handshake
+		- partial lifecycle observation
+	*/
+	go func() {
+
+		for {
+
+			loader.InferStaleFlows(
+				tracker,
+				graph,
+				5*time.Second,
+			)
 
 			time.Sleep(5 * time.Second)
 		}
@@ -155,7 +194,6 @@ func main() {
 			err,
 		)
 	}
-
 	/*
 		START CONNECT PIPELINE
 
@@ -236,6 +274,7 @@ func main() {
 			*/
 			loader.HandleClose(
 				tracker,
+				graph,
 				event,
 			)
 		},
