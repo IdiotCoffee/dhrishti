@@ -13,7 +13,11 @@ so the observability graph can show active_connections on the edge.
 
 @app.route("/auth")
 def auth():
-    time.sleep(random.uniform(1.0, 2.0))
+    # Keep this edge mostly fast (<1s p95 target), with rare slow spikes.
+    if random.random() < 0.97:
+        time.sleep(random.uniform(0.12, 0.45))
+    else:
+        time.sleep(random.uniform(1.2, 1.8))
 
     return {
         "authenticated": True,

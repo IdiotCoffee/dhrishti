@@ -49,7 +49,7 @@ func StartServer(
 	mux.Handle("/ws", wsGraphHandler)
 
 	log.Println(
-		"observability API listening on :8080",
+		"observability API listening on :8090",
 	)
 
 	/*

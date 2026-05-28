@@ -12,7 +12,11 @@ Payment — simulates a slow external provider; connection stays open for the sl
 
 @app.route("/pay")
 def pay():
-    time.sleep(random.uniform(1.0, 2.0))
+    # Keep payment mixed: often fast, sometimes slow enough to push p95 >1s.
+    if random.random() < 0.8:
+        time.sleep(random.uniform(0.15, 0.6))
+    else:
+        time.sleep(random.uniform(1.3, 2.4))
 
     if random.random() < 0.1:
         return {"status": "payment-failed"}, 500

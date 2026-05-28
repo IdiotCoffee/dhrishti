@@ -232,16 +232,22 @@ probable runtime truth.
 This is the beginning of:
 semantic timeout inference.
 */
+type staleFlowUpdate struct {
+	edgeKey types.EdgeKey
+	flow    types.ConnectionState
+}
+
 func InferStaleFlows(
 	tracker *types.FlowTracker,
 	graph *types.Graph,
-	timeout time.Duration,
+	incompleteTimeout time.Duration,
+	openTimeout time.Duration,
 ) {
 
-	tracker.Mu.Lock()
-	defer tracker.Mu.Unlock()
-
 	now := time.Now()
+	pending := make([]staleFlowUpdate, 0)
+
+	tracker.Mu.Lock()
 
 	for _, flow := range tracker.Flows {
 
@@ -252,71 +258,55 @@ func InferStaleFlows(
 			continue
 		}
 
-		/*
-			How long has this flow existed?
-		*/
-		age := now.Sub(flow.ConnectTime)
+		ageSinceConnect := now.Sub(flow.ConnectTime)
+		ageSinceUpdate := now.Sub(flow.LastUpdated)
 
-		/*
-			If a flow remains incomplete
-			for too long:
+		staleIncomplete :=
+			!flow.Accepted && ageSinceConnect > incompleteTimeout
 
-				connect observed
-				but no accept/close
+		// Accepted but never closed — missed CLOSE events or ringbuf loss.
+		staleOpen :=
+			flow.Accepted && ageSinceUpdate > openTimeout
 
-			then infer probable timeout/failure.
-		*/
-		if !flow.Accepted && age > timeout {
+		if !staleIncomplete && !staleOpen {
+			continue
+		}
 
+		if staleIncomplete {
 			flow.Failed = true
+			flow.FailureReason = "stale_incomplete_flow"
+		} else {
+			flow.FailureReason = "stale_open_flow"
+		}
 
-			flow.FailureReason =
-				"stale_incomplete_flow"
+		flow.Closed = true
+		flow.CloseTime = now
+		flow.LastUpdated = now
 
-			/*
-				Mark as closed semantically.
-
-				Even though kernel close
-				was never observed.
-			*/
-			flow.Closed = true
-
-			flow.CloseTime = now
-
-			flow.LastUpdated = now
-
-			/*
-				Update graph edge state because
-				we are semantically finalizing
-				this lifecycle.
-			*/
-			edgeKey := types.EdgeKey{
+		pending = append(pending, staleFlowUpdate{
+			edgeKey: types.EdgeKey{
 				Source:      flow.SourceService,
 				Destination: flow.DestinationService,
+			},
+			flow: *flow,
+		})
+	}
+
+	tracker.Mu.Unlock()
+
+	for _, update := range pending {
+		graph.Mu.Lock()
+
+		edge, exists := graph.Edges[update.edgeKey]
+		if exists {
+
+			if edge.ActiveConnections > 0 {
+				edge.ActiveConnections--
 			}
 
-			graph.Mu.Lock()
-
-			edge, exists := graph.Edges[edgeKey]
-			if exists {
-
-				/*
-					This flow is now considered
-					semantically closed.
-
-					So decrement active count.
-				*/
-				if edge.ActiveConnections > 0 {
-					edge.ActiveConnections--
-				}
-
-				/*
-					Aggregate behavioral failure metrics.
-				*/
-				UpdateEdgeMetrics(edge, flow)
-			}
-
-			graph.Mu.Unlock()
+			UpdateEdgeMetrics(edge, &update.flow)
 		}
+
+		graph.Mu.Unlock()
 	}
 }

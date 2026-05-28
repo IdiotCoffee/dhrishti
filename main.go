@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"runtime"
 	"time"
 
 	"dhrishti/api"
@@ -135,6 +136,7 @@ func main() {
 				tracker,
 				graph,
 				5*time.Second,
+				15*time.Second,
 			)
 
 			time.Sleep(5 * time.Second)
@@ -225,32 +227,10 @@ func main() {
 		dockerResolver,
 
 		func(event *resolver.EnrichedRuntimeEvent) {
-
-			/*
-				Print enriched semantic event.
-			*/
 			loader.PrintEnrichedRuntimeEvent(event)
-
-			/*
-				Update topology graph state.
-
-				This tracks:
-				service dependency emergence.
-			*/
-			graph.RecordConnect(
-				event.SourceService,
-				event.DestinationService,
-				event.DestinationPort,
-			)
-
-			/*
-				Create runtime flow state.
-
-				This begins:
-				connection lifecycle tracking.
-			*/
-			loader.HandleConnect(
+			loader.RecordNewConnection(
 				tracker,
+				graph,
 				event,
 			)
 		},
@@ -267,19 +247,7 @@ func main() {
 
 		dockerResolver,
 		func(event *resolver.EnrichedRuntimeEvent) {
-
-			/*
-				Print enriched lifecycle event.
-			*/
 			loader.PrintEnrichedRuntimeEvent(event)
-
-			/*
-				Finalize runtime flow.
-
-				Computes:
-				- duration
-				- closed state
-			*/
 			loader.HandleClose(
 				tracker,
 				graph,
@@ -300,22 +268,7 @@ func main() {
 		dockerResolver,
 
 		func(event *resolver.EnrichedRuntimeEvent) {
-
-			/*
-				Print server-side lifecycle event.
-			*/
 			loader.PrintEnrichedRuntimeEvent(event)
-
-			/*
-				Mark runtime flow as accepted.
-
-				Very important:
-				CONNECT and ACCEPT are observed
-				from opposite perspectives.
-
-				The correlation engine handles:
-				client/server identity reconciliation.
-			*/
 			loader.HandleAccept(
 				tracker,
 				event,
@@ -331,5 +284,32 @@ func main() {
 		All telemetry processing now happens
 		inside concurrent goroutines.
 	*/
+
+	/*
+		Pin probes for the lifetime of the process.
+
+		The pipeline goroutines only hold a reference to Probe.Reader, not to the
+		Probe struct itself. After the StartTCP*Pipeline calls above, the local
+		variables connectProbe/closeProbe/acceptProbe may be marked dead by the
+		compiler's liveness maps (no subsequent instruction in main reads them).
+
+		When the GC traces main's stack at the select{} safe-point and sees those
+		variables are dead, it can collect the Probe structs. Collecting a Probe
+		lets its embedded link.Link finalizer fire, which silently detaches the
+		eBPF kprobe from the kernel. rd.Read() then blocks forever waiting for
+		events that will never arrive — no error, no crash, just silence.
+
+		Fix: pass the probes as ARGUMENTS to a goroutine that runs forever.
+		Function arguments are evaluated at the call site (while main's frame is
+		still fully live), copied into the goroutine's own stack frame, and remain
+		reachable GC roots for as long as that goroutine exists.
+	*/
+	go func(probes ...*loader.Probe) {
+		for {
+			time.Sleep(time.Hour)
+			runtime.KeepAlive(probes)
+		}
+	}(connectProbe, closeProbe, acceptProbe)
+
 	select {}
 }

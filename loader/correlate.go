@@ -55,6 +55,25 @@ func HandleConnect(
 }
 
 /*
+RecordNewConnection updates flow and graph state for a connect event.
+
+Never hold tracker.Mu and graph.Mu at the same time — nested locks
+deadlock with InferStaleFlows and stall all telemetry pipelines.
+*/
+func RecordNewConnection(
+	tracker *types.FlowTracker,
+	graph *types.Graph,
+	event *resolver.EnrichedRuntimeEvent,
+) {
+	HandleConnect(tracker, event)
+	graph.RecordConnect(
+		event.SourceService,
+		event.DestinationService,
+		event.DestinationPort,
+	)
+}
+
+/*
 HandleAccept marks server-side acceptance.
 
 IMPORTANT:
@@ -111,7 +130,6 @@ func HandleClose(
 	key := BuildFlowKey(event)
 
 	tracker.Mu.Lock()
-	defer tracker.Mu.Unlock()
 
 	flow, exists := tracker.Flows[key]
 
@@ -122,6 +140,7 @@ func HandleClose(
 
 		flow, exists = tracker.Flows[key]
 		if !exists {
+			tracker.Mu.Unlock()
 			return
 		}
 	}
@@ -132,6 +151,7 @@ func HandleClose(
 		rolling metrics double-count the same lifecycle.
 	*/
 	if flow.Closed {
+		tracker.Mu.Unlock()
 		return
 	}
 
@@ -151,16 +171,14 @@ func HandleClose(
 	// - short-lived flow
 	InferFailure(flow)
 
-	// Lookup graph edge representing:
-	//
-	// source_service -> destination_service
 	edgeKey := types.EdgeKey{
 		Source:      flow.SourceService,
 		Destination: flow.DestinationService,
 	}
+	flowSnapshot := *flow
 
-	// IMPORTANT:
-	// graph state is a separate ownership domain.
+	tracker.Mu.Unlock()
+
 	graph.Mu.Lock()
 
 	edge, exists := graph.Edges[edgeKey]
@@ -173,7 +191,7 @@ func HandleClose(
 			edge.ActiveConnections--
 		}
 
-		UpdateEdgeMetrics(edge, flow)
+		UpdateEdgeMetrics(edge, &flowSnapshot)
 	}
 
 	graph.Mu.Unlock()
@@ -187,11 +205,19 @@ func PrintFlows(
 ) {
 
 	tracker.Mu.RLock()
-	defer tracker.Mu.RUnlock()
+
+	snapshots := make([]types.ConnectionState, 0, len(tracker.Flows))
+	for _, flow := range tracker.Flows {
+		snapshots = append(snapshots, *flow)
+	}
+	tracker.Mu.RUnlock()
 
 	log.Println("\n=== Runtime Flows ===")
 
-	for _, flow := range tracker.Flows {
+	for _, flow := range snapshots {
+		if flow.SourceService == "unknown" && flow.DestinationService == "external" {
+			continue
+		}
 
 		log.Printf(
 			"%s -> %s | accepted=%v | closed=%v | duration=%s",

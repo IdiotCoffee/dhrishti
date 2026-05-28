@@ -1,5 +1,6 @@
 import random
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
@@ -13,20 +14,31 @@ visible on the graph between WebSocket snapshots.
 
 GATEWAY_URL = "http://gateway:8080/"
 
-while True:
-    idle_seconds = random.uniform(15, 25)
-    print(f"[client] idle {idle_seconds:.1f}s")
-    time.sleep(idle_seconds)
+def fire_request(seq):
+    try:
+        response = requests.get(GATEWAY_URL, timeout=12)
+        print(f"  [{seq}] status={response.status_code}")
+    except Exception as e:
+        print(f"  [{seq}] failed: {e}")
 
-    burst_size = random.randint(1, 2)
-    print(f"[client] burst x{burst_size}")
 
-    for i in range(burst_size):
-        try:
-            response = requests.get(GATEWAY_URL, timeout=30)
-            print(f"  [{i + 1}/{burst_size}] status={response.status_code}")
-        except Exception as e:
-            print(f"  [{i + 1}/{burst_size}] failed:", e)
+next_fire = time.monotonic()
+request_seq = 0
 
-        if i < burst_size - 1:
-            time.sleep(random.uniform(1.0, 2.0))
+with ThreadPoolExecutor(max_workers=2) as pool:
+    while True:
+        idle_seconds = random.uniform(5, 7)
+        next_fire += idle_seconds
+
+        sleep_for = next_fire - time.monotonic()
+        if sleep_for > 0:
+            print(f"[client] idle {sleep_for:.1f}s")
+            time.sleep(sleep_for)
+
+        burst_size = random.randint(1, 2)
+        print(f"[client] burst x{burst_size}")
+
+        for _ in range(burst_size):
+            request_seq += 1
+            pool.submit(fire_request, request_seq)
+            time.sleep(random.uniform(0.2, 0.6))

@@ -417,14 +417,22 @@ func (g *Graph) Print() {
 		No mutation occurs here.
 	*/
 	g.Mu.RLock()
-	defer g.Mu.RUnlock()
+
+	edges := make([]Edge, 0, len(g.Edges))
+	for _, edge := range g.Edges {
+		edges = append(edges, *edge)
+	}
+	g.Mu.RUnlock()
 
 	fmt.Println("\n=== Live Service Graph ===")
 
 	/*
 		Iterate through all known edges.
 	*/
-	for _, edge := range g.Edges {
+	for _, edge := range edges {
+		if edge.Source == "unknown" && edge.Destination == "external" {
+			continue
+		}
 
 		fmt.Printf(
 			"%s ─────▶ %s | total=%d | active=%d | avg=%s | failed=%d | short_lived=%d | last_seen=%s\n",

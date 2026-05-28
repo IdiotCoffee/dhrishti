@@ -9,6 +9,7 @@ import (
 )
 
 type Probe struct {
+	Collection *ebpf.Collection
 	Program *ebpf.Program
 	Link    link.Link
 	Reader  *ringbuf.Reader
@@ -84,6 +85,7 @@ func AttachKprobe(
 	}
 
 	return &Probe{
+		Collection: coll,
 		Program: prog,
 		Link:    lnk,
 		Reader:  rd,
@@ -154,6 +156,7 @@ func AttachKretprobe(
 	}
 
 	return &Probe{
+		Collection: coll,
 		Program: prog,
 		Link:    lnk,
 		Reader:  rd,

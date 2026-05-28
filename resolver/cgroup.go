@@ -44,9 +44,16 @@ func ResolveContainerID(pid uint32) (string, error) {
 }
 
 func (d *DockerResolver) ResolveServiceName(containerID string) (string, error) {
-	cli := d.cli
+	d.mu.RLock()
+	service, exists := d.containerToService[containerID]
+	d.mu.RUnlock()
 
-	inspect, err := cli.ContainerInspect(
+	if exists {
+		return service, nil
+	}
+
+	// Cache miss (e.g. container started after last refresh). Inspect once.
+	inspect, err := d.cli.ContainerInspect(
 		context.Background(),
 		containerID,
 	)
@@ -54,11 +61,19 @@ func (d *DockerResolver) ResolveServiceName(containerID string) (string, error) 
 		return "", err
 	}
 
-	service := inspect.Config.Labels["com.docker.compose.service"]
+	service = inspect.Config.Labels["com.docker.compose.service"]
 
 	if service == "" {
 		return "", fmt.Errorf("service label not found")
 	}
+
+	d.mu.Lock()
+	d.containerToService[containerID] = service
+	if len(inspect.ID) >= 12 {
+		d.containerToService[inspect.ID[:12]] = service
+	}
+	d.containerToService[inspect.ID] = service
+	d.mu.Unlock()
 
 	return service, nil
 }

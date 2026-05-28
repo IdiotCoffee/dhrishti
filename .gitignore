@@ -13,3 +13,4 @@ vmlinux.h
 
 # misc
 .DS_Store
+.env

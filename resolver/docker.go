@@ -53,6 +53,9 @@ type DockerResolver struct {
 
 	ipToService map[string]string
 
+	// container ID (full or short) -> compose service name
+	containerToService map[string]string
+
 	lastRefresh time.Time
 }
 
@@ -75,7 +78,8 @@ func NewDockerResolver() (*DockerResolver, error) {
 	resolver := &DockerResolver{
 		cli: cli,
 
-		ipToService: make(map[string]string),
+		ipToService:          make(map[string]string),
+		containerToService:   make(map[string]string),
 	}
 
 	/*
@@ -106,7 +110,8 @@ This prevents:
 */
 func (d *DockerResolver) RefreshCache() error {
 
-	newMap := make(map[string]string)
+	newIPMap := make(map[string]string)
+	newContainerMap := make(map[string]string)
 
 	/*
 		Query all currently running containers.
@@ -164,6 +169,13 @@ func (d *DockerResolver) RefreshCache() error {
 			continue
 		}
 
+		fullID := inspect.ID
+		newContainerMap[fullID] = service
+		if len(fullID) >= 12 {
+			newContainerMap[fullID[:12]] = service
+		}
+		newContainerMap[c.ID] = service
+
 		/*
 			Containers may belong to
 			multiple Docker networks.
@@ -177,7 +189,7 @@ func (d *DockerResolver) RefreshCache() error {
 
 			if ip != "" {
 
-				newMap[ip] = service
+				newIPMap[ip] = service
 			}
 		}
 	}
@@ -192,7 +204,8 @@ func (d *DockerResolver) RefreshCache() error {
 	*/
 	d.mu.Lock()
 
-	d.ipToService = newMap
+	d.ipToService = newIPMap
+	d.containerToService = newContainerMap
 	d.lastRefresh = time.Now()
 
 	d.mu.Unlock()

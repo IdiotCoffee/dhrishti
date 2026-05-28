@@ -12,7 +12,11 @@ Inventory — slow responses + occasional failures for observability demos.
 
 @app.route("/inventory")
 def inventory():
-    time.sleep(random.uniform(1.0, 2.5))
+    # Bimodal latency so this edge has visible tail behavior.
+    if random.random() < 0.75:
+        time.sleep(random.uniform(0.2, 0.75))
+    else:
+        time.sleep(random.uniform(1.6, 3.0))
 
     if random.random() < 0.08:
         return {"error": "inventory timeout"}, 500

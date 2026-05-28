@@ -9,7 +9,11 @@ app = Flask(__name__)
 
 @app.route("/product")
 def product():
-    time.sleep(random.uniform(0.3, 0.6))
+    # Product itself stays mostly fast, but has occasional slower responses.
+    if random.random() < 0.85:
+        time.sleep(random.uniform(0.12, 0.45))
+    else:
+        time.sleep(random.uniform(1.0, 1.8))
 
     try:
         inventory = requests.get(
