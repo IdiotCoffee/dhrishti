@@ -3,6 +3,7 @@ package resolver
 import (
 	"context"
 	"log"
+	"path"
 	"sync"
 	"time"
 
@@ -78,8 +79,8 @@ func NewDockerResolver() (*DockerResolver, error) {
 	resolver := &DockerResolver{
 		cli: cli,
 
-		ipToService:          make(map[string]string),
-		containerToService:   make(map[string]string),
+		ipToService:        make(map[string]string),
+		containerToService: make(map[string]string),
 	}
 
 	/*
@@ -162,11 +163,23 @@ func (d *DockerResolver) RefreshCache() error {
 				order-service
 				payment-service
 		*/
-		service :=
-			inspect.Config.Labels["com.docker.compose.service"]
+		var labels map[string]string
+		var image string
+		if inspect.Config != nil {
+			labels = inspect.Config.Labels
+			image = inspect.Config.Image
+		}
+
+		service := deriveServiceIdentity(
+			labels,
+			inspect.Name,
+			image,
+		)
 
 		if service == "" {
-			continue
+			// Keep a stable fallback so non-compose containers (e.g. k6) are still
+			// represented in identity maps instead of collapsing to unknown.
+			service = "container_" + c.ID[:12]
 		}
 
 		fullID := inspect.ID
@@ -211,6 +224,38 @@ func (d *DockerResolver) RefreshCache() error {
 	d.mu.Unlock()
 
 	return nil
+}
+
+func deriveServiceIdentity(
+	labels map[string]string,
+	containerName string,
+	image string,
+) string {
+	if labels != nil {
+		if service := labels["com.docker.compose.service"]; service != "" {
+			return service
+		}
+	}
+
+	name := containerName
+	name = path.Clean(name)
+	name = path.Base(name)
+	if name != "" && name != "." && name != "/" {
+		return name
+	}
+
+	if image != "" {
+		base := path.Base(image)
+		// drop optional tag/digest suffix
+		for i, ch := range base {
+			if ch == ':' || ch == '@' {
+				return base[:i]
+			}
+		}
+		return base
+	}
+
+	return ""
 }
 
 /*
@@ -268,9 +313,35 @@ func (d *DockerResolver) ResolveIP(
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
+	/*
+		Loopback traffic belongs
+		to the local host namespace.
+
+		Common examples:
+		- browser
+		- frontend dev server
+		- local APIs
+		- k6 with host networking
+	*/
+	if ip == "127.0.0.1" || ip == "::1" {
+		return "host"
+	}
+
 	service, exists :=
 		d.ipToService[ip]
 
+	/*
+		Important distinction:
+
+		external:
+			traffic outside Docker topology
+
+		unresolved:
+			identity lookup failed unexpectedly
+
+		This distinction matters
+		for observability semantics.
+	*/
 	if !exists {
 		return "external"
 	}

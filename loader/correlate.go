@@ -14,14 +14,22 @@ into canonical flow identity.
 func BuildFlowKey(
 	event *resolver.EnrichedRuntimeEvent,
 ) types.FlowKey {
-
-	return types.FlowKey{
+	key := types.FlowKey{
 		SourceIP:   event.SourceIP,
 		SourcePort: event.SourcePort,
 
 		DestinationIP:   event.DestinationIP,
 		DestinationPort: event.DestinationPort,
 	}
+
+	// Canonicalize tuple orientation so CONNECT/ACCEPT/CLOSE from either side
+	// map to the same flow key.
+	if key.SourceIP > key.DestinationIP ||
+		(key.SourceIP == key.DestinationIP && key.SourcePort > key.DestinationPort) {
+		return key.Reverse()
+	}
+
+	return key
 }
 
 /*
@@ -86,8 +94,7 @@ func HandleAccept(
 	tracker *types.FlowTracker,
 	event *resolver.EnrichedRuntimeEvent,
 ) {
-
-	key := BuildFlowKey(event).Reverse()
+	key := BuildFlowKey(event)
 
 	tracker.Mu.Lock()
 	defer tracker.Mu.Unlock()

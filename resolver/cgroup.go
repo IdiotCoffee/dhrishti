@@ -16,31 +16,76 @@ func ResolveContainerID(pid uint32) (string, error) {
 	}
 
 	cgroup := string(data)
+	lines := strings.Split(cgroup, "\n")
 
-	// Example:
-	// 0::/system.slice/docker-<container-id>.scope
-
-	start := strings.Index(cgroup, "docker-")
-	if start == -1 {
-		return "", fmt.Errorf("docker prefix not found in cgroup")
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		if id := extractContainerIDFromCgroupLine(line); id != "" {
+			return id, nil
+		}
 	}
 
-	relativeEnd := strings.Index(cgroup[start:], ".scope")
-	if relativeEnd == -1 {
-		return "", fmt.Errorf(".scope suffix not found in cgroup")
+	return "", fmt.Errorf("container ID not found in cgroup")
+}
+
+func extractContainerIDFromCgroupLine(line string) string {
+	// Common forms:
+	// - 0::/system.slice/docker-<id>.scope
+	// - 0::/docker/<id>
+	// - .../cri-containerd-<id>.scope
+	if idx := strings.Index(line, "docker-"); idx != -1 {
+		rest := line[idx+len("docker-"):]
+		if end := strings.Index(rest, ".scope"); end != -1 {
+			if id := normalizeContainerID(rest[:end]); id != "" {
+				return id
+			}
+		}
 	}
 
-	end := start + relativeEnd
-
-	start += len("docker-")
-
-	containerID := cgroup[start:end]
-
-	if containerID == "" {
-		return "", fmt.Errorf("empty container ID extracted")
+	if idx := strings.Index(line, "cri-containerd-"); idx != -1 {
+		rest := line[idx+len("cri-containerd-"):]
+		if end := strings.Index(rest, ".scope"); end != -1 {
+			if id := normalizeContainerID(rest[:end]); id != "" {
+				return id
+			}
+		}
 	}
 
-	return containerID, nil
+	for _, part := range strings.Split(line, "/") {
+		if id := normalizeContainerID(part); id != "" {
+			return id
+		}
+	}
+
+	return ""
+}
+
+func normalizeContainerID(raw string) string {
+	id := strings.TrimSpace(raw)
+	id = strings.TrimSuffix(id, ".scope")
+	id = strings.TrimPrefix(id, "docker-")
+	id = strings.TrimPrefix(id, "cri-containerd-")
+
+	// Docker short/full IDs are lowercase hex, typically 12 or 64 chars.
+	if len(id) < 12 {
+		return ""
+	}
+
+	for _, ch := range id {
+		isDigit := ch >= '0' && ch <= '9'
+		isLowerHex := ch >= 'a' && ch <= 'f'
+		if !isDigit && !isLowerHex {
+			return ""
+		}
+	}
+
+	if len(id) > 64 {
+		id = id[:64]
+	}
+
+	return id
 }
 
 func (d *DockerResolver) ResolveServiceName(containerID string) (string, error) {
@@ -61,7 +106,18 @@ func (d *DockerResolver) ResolveServiceName(containerID string) (string, error) 
 		return "", err
 	}
 
-	service = inspect.Config.Labels["com.docker.compose.service"]
+	var labels map[string]string
+	var image string
+	if inspect.Config != nil {
+		labels = inspect.Config.Labels
+		image = inspect.Config.Image
+	}
+
+	service = deriveServiceIdentity(
+		labels,
+		inspect.Name,
+		image,
+	)
 
 	if service == "" {
 		return "", fmt.Errorf("service label not found")

@@ -43,6 +43,16 @@ func (d *DockerResolver) EnrichEvent(
 		}
 	}
 
+	// PID->container lookup can fail on some cgroup layouts; use source IP as a
+	// fallback identity hint. Do not overwrite with "external" because that
+	// hides unresolved telemetry as false certainty.
+	if sourceService == "unknown" {
+		resolvedSource := d.ResolveIP(event.SourceIP)
+		if resolvedSource != "external" {
+			sourceService = resolvedSource
+		}
+	}
+
 	lookupIP := event.DestinationIP
 
 	// ACCEPT events are observed from the
@@ -58,7 +68,7 @@ func (d *DockerResolver) EnrichEvent(
 	//
 	// So for ACCEPT events,
 	// the service identity lives on SourceIP.
-	if event.EventType == "accept" {
+	if event.Type == types.EventAccept {
 		lookupIP = event.SourceIP
 	}
 
