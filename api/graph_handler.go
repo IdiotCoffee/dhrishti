@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"dhrishti/config"
 	"dhrishti/types"
 )
 
@@ -21,7 +22,9 @@ Clients can now consume:
 without direct access to runtime internals.
 */
 type GraphHandler struct {
-	Graph *types.Graph
+	Graph   *types.Graph
+	Unknown *types.UnknownIPRegistry
+	Config  config.Config
 }
 
 /*
@@ -73,7 +76,7 @@ func (h *GraphHandler) ServeHTTP(
 		Convert runtime graph
 		into API-safe response structure.
 	*/
-	response := BuildGraphResponse(h.Graph)
+	response := BuildGraphResponse(h.Graph, h.Unknown, h.Config)
 
 	/*
 		Response content type matters heavily

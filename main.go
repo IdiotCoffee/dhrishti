@@ -6,14 +6,18 @@ import (
 	"time"
 
 	"dhrishti/api"
+	"dhrishti/config"
 	"dhrishti/loader"
 	"dhrishti/resolver"
+	"dhrishti/telemetry"
 	"dhrishti/types"
 )
 
 func main() {
 
 	log.Println("starting dhrishti telemetry engine")
+
+	cfg := config.Load()
 
 	/*
 		Initialize Docker metadata resolver.
@@ -59,6 +63,8 @@ func main() {
 		service dependency structure.
 	*/
 	graph := types.NewGraph()
+	unknownIPs := types.NewUnknownIPRegistry()
+	counter := telemetry.NewCounter()
 	/*
 		Start observability API server.
 
@@ -73,7 +79,7 @@ func main() {
 		- /metrics
 		- /ws
 	*/
-	go api.StartServer(graph)
+	go api.StartServer(graph, unknownIPs, counter, cfg)
 	/*
 		Runtime flow tracker.
 
@@ -227,6 +233,8 @@ func main() {
 		dockerResolver,
 
 		func(event *resolver.EnrichedRuntimeEvent) {
+			loader.ApplyEntryPointRules(event, cfg, unknownIPs)
+			counter.IncConnect()
 			loader.PrintEnrichedRuntimeEvent(event)
 			loader.RecordNewConnection(
 				tracker,
@@ -247,10 +255,13 @@ func main() {
 
 		dockerResolver,
 		func(event *resolver.EnrichedRuntimeEvent) {
+			counter.IncClose()
 			loader.PrintEnrichedRuntimeEvent(event)
 			loader.HandleClose(
 				tracker,
 				graph,
+				cfg,
+				unknownIPs,
 				event,
 			)
 		},
@@ -268,6 +279,7 @@ func main() {
 		dockerResolver,
 
 		func(event *resolver.EnrichedRuntimeEvent) {
+			counter.IncAccept()
 			loader.PrintEnrichedRuntimeEvent(event)
 			loader.HandleAccept(
 				tracker,

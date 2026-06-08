@@ -1,26 +1,18 @@
 import React, { useEffect, useState } from "react";
 
 import GraphView from "./GraphView";
+import UnknownIPTable from "./UnknownIPTable";
 
 import { fetchGraph } from "./api";
 
-/*
-Main observability UI.
-*/
 export default function App() {
   const [graph, setGraph] = useState({
     nodes: [],
     edges: [],
+    unknown_ips: [],
+    entry_services: [],
   });
 
-  /*
-  Prefer WebSocket snapshots for snappy edge state.
-
-  Observability is about reaction time:
-  when a connection closes/fails/recover, the UI should reflect immediately.
-
-  We keep polling as a fallback for environments where WS is unavailable.
-  */
   useEffect(() => {
     const wsUrl = "ws://localhost:8090/ws";
     const pollingMs = 2000;
@@ -31,7 +23,6 @@ export default function App() {
     async function loadGraph() {
       try {
         const data = await fetchGraph();
-
         setGraph(data);
       } catch (err) {
         console.error("fetching graph:", err);
@@ -55,16 +46,12 @@ export default function App() {
         try {
           const data = JSON.parse(evt.data);
           setGraph(data);
-        } catch (e) {
-          // If messages are malformed, fall back to polling.
+        } catch {
           startPolling();
         }
       };
 
-      ws.onerror = () => {
-        startPolling();
-      };
-
+      ws.onerror = () => startPolling();
       ws.onclose = () => {
         if (!stoppedRef.stopped) startPolling();
       };
@@ -84,10 +71,14 @@ export default function App() {
       style={{
         width: "100vw",
         height: "100vh",
-        background: "#0f1117",
+        display: "flex",
+        background: "#f1f5f9",
       }}
     >
-      <GraphView graph={graph} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <GraphView graph={graph} />
+      </div>
+      <UnknownIPTable entries={graph.unknown_ips} entryServices={graph.entry_services} />
     </div>
   );
 }

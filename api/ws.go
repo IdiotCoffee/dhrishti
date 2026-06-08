@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"dhrishti/config"
 	"dhrishti/types"
 
 	"github.com/gorilla/websocket"
@@ -20,10 +21,9 @@ Why WebSockets here?
 
 */
 type WSGraphHandler struct {
-	Graph *types.Graph
-
-	// How often we emit snapshots to connected clients.
-	// 200ms feels snappy while staying lightweight.
+	Graph    *types.Graph
+	Unknown  *types.UnknownIPRegistry
+	Config   config.Config
 	Interval time.Duration
 }
 
@@ -62,7 +62,7 @@ func (h *WSGraphHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	push := func() bool {
-		msg := BuildGraphResponse(h.Graph)
+		msg := BuildGraphResponse(h.Graph, h.Unknown, h.Config)
 		return conn.WriteMessage(websocket.TextMessage, mustJSON(msg)) != nil
 	}
 

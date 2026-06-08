@@ -11,17 +11,22 @@ const INITIAL_LAYOUT = {
   nodeOverlap: 24,
 };
 
+const FONT = '"IBM Plex Sans", system-ui, sans-serif';
+
+const HEAT = {
+  normal: { color: "#22c55e", label: "Normal" },
+  elevated: { color: "#f59e0b", label: "Elevated" },
+  hot: { color: "#ef4444", label: "Hot" },
+  idle: { color: "#cbd5e1", label: "Idle" },
+};
+
 function classifyNode(id) {
   const lower = id.toLowerCase();
-  if (lower === "client" || lower.endsWith("-client")) return "client";
-  if (lower === "gateway" || lower.includes("gateway")) return "gateway";
+  if (lower === "client") return "client";
+  if (lower.includes("gateway")) return "gateway";
   return "service";
 }
 
-/*
-Rolling operational metrics (RPS, p95, failure_rate) describe *recent* edge health.
-Lifetime connection counters stay in tooltips — labels show what operators act on now.
-*/
 function formatRps(rps) {
   if (rps >= 10) return rps.toFixed(1);
   if (rps >= 1) return rps.toFixed(1);
@@ -32,33 +37,64 @@ function formatFailRate(rate) {
   return `${(rate * 100).toFixed(rate < 0.01 && rate > 0 ? 1 : 0)}%`;
 }
 
-/*
-Dashed "live" animation only when a socket is open right now.
-Longer mock request handlers keep active_connections > 0 long enough to see.
-*/
 function isEdgeHot(edge) {
   return (edge.active_connections ?? 0) > 0;
 }
 
-/*
-Edge color priority: unhealthy (fail rate) > tail latency (p95) > live traffic > idle.
-*/
-function edgeLineColor(edge) {
-  if (edge.failure_rate > 0.5) return "#ef4444";
-  if (edge.p95_latency_ms > 1000) return "#f97316";
-  if ((edge.active_connections ?? 0) > 0) return "#22c55e";
-  if ((edge.requests_per_second ?? 0) > 0) return "#84cc16";
-  return "#6b7280";
+function sortedValues(edges, getter) {
+  return edges.map(getter).filter((v) => v > 0).sort((a, b) => a - b);
 }
 
-/*
-Thickness encodes load (requests_per_second) so hot dependencies stand out
-without a separate chart — width is proportional to sqrt(RPS) for readability.
-*/
-function edgeWidth(rps) {
+function percentileRank(sorted, value) {
+  if (!sorted.length) return 0;
+  const below = sorted.filter((v) => v < value).length;
+  return below / sorted.length;
+}
+
+function buildColorContext(edges) {
+  return {
+    p95: sortedValues(edges, (e) => e.p95_latency_ms ?? 0),
+    fail: sortedValues(edges, (e) => e.failure_rate ?? 0),
+    rps: sortedValues(edges, (e) => e.requests_per_second ?? 0),
+  };
+}
+
+function edgeHeatPercentile(edge, ctx) {
+  const scores = [];
+  const p95 = edge.p95_latency_ms ?? 0;
+  const fail = edge.failure_rate ?? 0;
+  const rps = edge.requests_per_second ?? 0;
+
+  if (ctx.p95.length && p95 > 0) scores.push(percentileRank(ctx.p95, p95));
+  if (ctx.fail.length && fail > 0) scores.push(percentileRank(ctx.fail, fail));
+  if (ctx.rps.length && rps > 0) scores.push(percentileRank(ctx.rps, rps));
+
+  return scores.length ? Math.max(...scores) : 0;
+}
+
+function edgeHeatLevel(edge, ctx) {
+  const heat = edgeHeatPercentile(edge, ctx);
+  const hasTraffic =
+    (edge.requests_per_second ?? 0) > 0 ||
+    (edge.p95_latency_ms ?? 0) > 0 ||
+    (edge.failure_rate ?? 0) > 0;
+
+  if (!hasTraffic) return "idle";
+  if (heat >= 0.75) return "hot";
+  if (heat >= 0.5) return "elevated";
+  return "normal";
+}
+
+function edgeLineColor(edge, ctx) {
+  return HEAT[edgeHeatLevel(edge, ctx)].color;
+}
+
+function edgeWidth(rps, ctx) {
   const min = 2;
-  const max = 10;
-  return min + Math.min(max - min, Math.sqrt(Math.max(0, rps)) * 2.5);
+  const max = 9;
+  if (!ctx.rps.length || rps <= 0) return min;
+  const rank = percentileRank(ctx.rps, rps);
+  return min + rank * (max - min);
 }
 
 function edgeLabel(edge) {
@@ -69,30 +105,23 @@ function edgeLabel(edge) {
 
   return [
     `RPS: ${formatRps(rps)}`,
-    `avg: ${avg}ms`,
-    `p95: ${p95}ms`,
+    `TCP avg: ${avg}ms`,
+    `TCP p95: ${p95}ms`,
     `fail: ${formatFailRate(fail)}`,
   ].join("\n");
 }
 
-/*
-Tooltip carries lifetime + rolling detail — too much for edge labels,
-but needed when inspecting a single dependency under load.
-*/
-function edgeTooltip(edge) {
-  const rps = edge.requests_per_second ?? 0;
-  const avg = edge.recent_average_latency_ms ?? 0;
-  const p95 = edge.p95_latency_ms ?? 0;
-  const fail = edge.failure_rate ?? 0;
-
+function edgeTooltip(edge, ctx) {
+  const level = edgeHeatLevel(edge, ctx);
   return [
     `${edge.source} → ${edge.target}:${edge.port}`,
+    `Heat: ${HEAT[level].label}`,
     `Connections: ${edge.connection_count ?? 0}`,
     `Active: ${edge.active_connections ?? 0}`,
-    `RPS: ${formatRps(rps)}`,
-    `Recent avg latency: ${avg}ms`,
-    `p95 latency: ${p95}ms`,
-    `Failure rate: ${formatFailRate(fail)}`,
+    `RPS: ${formatRps(edge.requests_per_second ?? 0)} (comparable with k6 req/s)`,
+    `TCP avg: ${edge.recent_average_latency_ms ?? 0}ms (not HTTP latency)`,
+    `TCP p95: ${edge.p95_latency_ms ?? 0}ms`,
+    `Failure: ${formatFailRate(edge.failure_rate ?? 0)}`,
   ].join("\n");
 }
 
@@ -100,7 +129,7 @@ function stableEdgeId(edge) {
   return `${edge.source}->${edge.target}:${edge.port}`;
 }
 
-function graphToElements(graph) {
+function graphToElements(graph, ctx) {
   const elements = [];
 
   graph.nodes.forEach((node) => {
@@ -113,6 +142,7 @@ function graphToElements(graph) {
   graph.edges.forEach((edge) => {
     const hot = isEdgeHot(edge);
     const rps = edge.requests_per_second ?? 0;
+    const color = edgeLineColor(edge, ctx);
 
     elements.push({
       data: {
@@ -120,10 +150,9 @@ function graphToElements(graph) {
         source: edge.source,
         target: edge.target,
         label: edgeLabel(edge),
-        tooltip: edgeTooltip(edge),
-        edgeColor: edgeLineColor(edge),
-        edgeWidth: edgeWidth(rps),
-        hot: hot ? "yes" : "no",
+        tooltip: edgeTooltip(edge, ctx),
+        edgeColor: color,
+        edgeWidth: edgeWidth(rps, ctx),
       },
       classes: hot ? "active-edge" : "idle-edge",
     });
@@ -135,7 +164,7 @@ function graphToElements(graph) {
 const STYLESHEET = [
   {
     selector: "core",
-    style: { "background-color": "#0f1117" },
+    style: { "background-color": "#faf8f5" },
   },
   {
     selector: "node",
@@ -143,27 +172,29 @@ const STYLESHEET = [
       label: "data(label)",
       shape: "round-rectangle",
       width: "label",
-      height: 36,
+      height: 34,
       padding: "10px",
-      "font-size": 11,
-      color: "#e5e7eb",
+      "font-family": FONT,
+      "font-size": 12,
+      "font-weight": 500,
+      color: "#1e293b",
       "text-valign": "center",
       "text-halign": "center",
-      "border-width": 1,
-      "border-color": "#374151",
+      "background-color": "#ffffff",
+      "border-width": 2,
     },
   },
   {
     selector: "node.client",
-    style: { "background-color": "#7c3aed" },
+    style: { "border-color": "#8b5cf6", "background-color": "#f5f3ff" },
   },
   {
     selector: "node.gateway",
-    style: { "background-color": "#0284c7" },
+    style: { "border-color": "#3b82f6", "background-color": "#eff6ff" },
   },
   {
     selector: "node.service",
-    style: { "background-color": "#475569" },
+    style: { "border-color": "#94a3b8", "background-color": "#f8fafc" },
   },
   {
     selector: "edge",
@@ -172,15 +203,16 @@ const STYLESHEET = [
       label: "data(label)",
       "curve-style": "bezier",
       "target-arrow-shape": "triangle",
-      "arrow-scale": 0.8,
+      "arrow-scale": 0.85,
       "line-color": "data(edgeColor)",
       "target-arrow-color": "data(edgeColor)",
-      color: "#9ca3af",
-      "font-size": 8,
+      "font-family": FONT,
+      color: "#64748b",
+      "font-size": 9,
       "text-wrap": "wrap",
       "text-max-width": 120,
-      "text-background-color": "#0f1117",
-      "text-background-opacity": 0.9,
+      "text-background-color": "#faf8f5",
+      "text-background-opacity": 0.95,
       "text-background-padding": 3,
     },
   },
@@ -188,100 +220,66 @@ const STYLESHEET = [
     selector: "edge.active-edge",
     style: {
       "line-style": "dashed",
-      "line-dash-pattern": [8, 4],
+      "line-dash-pattern": [8, 5],
     },
   },
 ];
 
 function Legend() {
-  const row = { display: "flex", alignItems: "center", gap: 8, marginBottom: 4 };
+  const row = { display: "flex", alignItems: "center", gap: 8, marginBottom: 5 };
   const swatch = (color, dashed = false) => ({
-    width: 24,
+    width: 28,
     height: 0,
-    borderTop: `2px ${dashed ? "dashed" : "solid"} ${color}`,
+    borderTop: `2.5px ${dashed ? "dashed" : "solid"} ${color}`,
   });
 
   return (
     <div
       style={{
         position: "absolute",
-        top: 12,
-        left: 12,
+        top: 14,
+        left: 14,
         zIndex: 10,
         pointerEvents: "none",
+        fontFamily: FONT,
         fontSize: 11,
-        color: "#9ca3af",
-        background: "rgba(15, 17, 23, 0.9)",
-        border: "1px solid #374151",
-        borderRadius: 6,
-        padding: "10px 12px",
+        color: "#475569",
+        background: "rgba(255, 255, 255, 0.94)",
+        border: "1px solid #e2e8f0",
+        borderRadius: 8,
+        padding: "12px 14px",
         lineHeight: 1.4,
+        boxShadow: "0 2px 8px rgba(15, 23, 42, 0.06)",
       }}
     >
-      <div style={{ color: "#e5e7eb", marginBottom: 6, fontSize: 12 }}>
-        Dependency graph
+      <div style={{ fontWeight: 600, color: "#1e293b", marginBottom: 8 }}>
+        Service graph
       </div>
-      <div style={{ marginBottom: 6, color: "#6b7280", fontSize: 10 }}>
-        Edges (rolling metrics)
+      <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 6 }}>
+        Edge color = heat · dashed = live · all times are TCP
+      </div>
+      <div style={{ fontSize: 10, color: "#64748b", marginBottom: 8, lineHeight: 1.35 }}>
+        RPS ≈ k6 req/s at client edge. Latency is TCP session duration, not HTTP.
+      </div>
+      {["normal", "elevated", "hot"].map((level) => (
+        <div style={row} key={level}>
+          <span style={swatch(HEAT[level].color)} />
+          <span style={swatch(HEAT[level].color, true)} />
+          <span>{HEAT[level].label}</span>
+        </div>
+      ))}
+      <div style={{ ...row, marginTop: 2 }}>
+        <span style={swatch(HEAT.idle.color)} />
+        <span>No recent traffic</span>
+      </div>
+      <div style={{ margin: "8px 0 4px", fontSize: 10, color: "#94a3b8" }}>Nodes</div>
+      <div style={row}>
+        <span style={{ width: 10, height: 10, borderRadius: 2, background: "#f5f3ff", border: "2px solid #8b5cf6" }} />
+        <span>Client (aggregated)</span>
       </div>
       <div style={row}>
-        <span style={swatch("#ef4444")} />
-        <span>High failure rate (&gt;50%)</span>
-      </div>
-      <div style={row}>
-        <span style={swatch("#f97316")} />
-        <span>Slow p95 (&gt;1s)</span>
-      </div>
-      <div style={row}>
-        <span style={swatch("#22c55e", true)} />
-        <span>Open connection (active)</span>
-      </div>
-      <div style={row}>
-        <span style={swatch("#84cc16")} />
-        <span>Recent traffic (RPS &gt; 0)</span>
-      </div>
-      <div style={row}>
-        <span style={swatch("#6b7280")} />
-        <span>Idle / baseline</span>
-      </div>
-      <div style={{ marginTop: 4, fontSize: 10, color: "#6b7280" }}>
-        Line width ∝ √RPS · hover for detail
-      </div>
-      <div style={{ margin: "8px 0 6px", color: "#6b7280", fontSize: 10 }}>
-        Nodes
-      </div>
-      <div style={row}>
-        <span
-          style={{
-            width: 10,
-            height: 10,
-            borderRadius: 2,
-            background: "#7c3aed",
-          }}
-        />
-        <span>Client</span>
-      </div>
-      <div style={row}>
-        <span
-          style={{
-            width: 10,
-            height: 10,
-            borderRadius: 2,
-            background: "#0284c7",
-          }}
-        />
-        <span>Gateway</span>
-      </div>
-      <div style={row}>
-        <span
-          style={{
-            width: 10,
-            height: 10,
-            borderRadius: 2,
-            background: "#475569",
-          }}
-        />
-        <span>Internal service</span>
+        <span style={{ width: 10, height: 10, borderRadius: 2, background: "#eff6ff", border: "2px solid #3b82f6" }} />
+        <span>Entry / gateway</span>
       </div>
     </div>
   );
@@ -298,15 +296,17 @@ function EdgeTooltip({ tooltip }) {
         top: tooltip.y + 14,
         zIndex: 20,
         pointerEvents: "none",
+        fontFamily: FONT,
         fontSize: 11,
         lineHeight: 1.5,
-        color: "#e5e7eb",
-        background: "rgba(15, 17, 23, 0.95)",
-        border: "1px solid #4b5563",
+        color: "#334155",
+        background: "rgba(255, 255, 255, 0.97)",
+        border: "1px solid #e2e8f0",
         borderRadius: 6,
         padding: "8px 10px",
         whiteSpace: "pre-line",
         maxWidth: 280,
+        boxShadow: "0 4px 12px rgba(15, 23, 42, 0.08)",
       }}
     >
       {tooltip.text}
@@ -320,12 +320,16 @@ export default function GraphView({ graph }) {
   const animFrameRef = useRef(null);
   const [tooltip, setTooltip] = useState(null);
 
-  const elements = useMemo(() => graphToElements(graph), [graph]);
+  const colorCtx = useMemo(
+    () => buildColorContext(graph.edges),
+    [graph.edges],
+  );
 
-  /*
-  react-cytoscapejs can leave stale edge classes between polls.
-  Sync color, width, and hot/idle class directly on each graph update.
-  */
+  const elements = useMemo(
+    () => graphToElements(graph, colorCtx),
+    [graph, colorCtx],
+  );
+
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
@@ -339,10 +343,9 @@ export default function GraphView({ graph }) {
 
       ele.data({
         label: edgeLabel(edge),
-        tooltip: edgeTooltip(edge),
-        edgeColor: edgeLineColor(edge),
-        edgeWidth: edgeWidth(rps),
-        hot: hot ? "yes" : "no",
+        tooltip: edgeTooltip(edge, colorCtx),
+        edgeColor: edgeLineColor(edge, colorCtx),
+        edgeWidth: edgeWidth(rps, colorCtx),
       });
 
       if (hot) {
@@ -353,7 +356,7 @@ export default function GraphView({ graph }) {
         ele.addClass("idle-edge");
       }
     });
-  }, [graph]);
+  }, [graph, colorCtx]);
 
   useEffect(() => {
     const cy = cyRef.current;
@@ -410,7 +413,7 @@ export default function GraphView({ graph }) {
     let dashOffset = 0;
     const tick = () => {
       if (cyRef.current) {
-        dashOffset = (dashOffset + 0.6) % 24;
+        dashOffset = (dashOffset + 0.5) % 26;
         cyRef.current
           .edges(".active-edge")
           .style("line-dash-offset", dashOffset);

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"dhrishti/config"
 	"dhrishti/types"
 	"time"
 )
@@ -22,6 +23,8 @@ This is a VERY important architectural separation.
 */
 func BuildGraphResponse(
 	graph *types.Graph,
+	unknown *types.UnknownIPRegistry,
+	cfg config.Config,
 ) GraphResponse {
 
 	/*
@@ -34,8 +37,10 @@ func BuildGraphResponse(
 	defer graph.Mu.RUnlock()
 
 	response := GraphResponse{
-		Nodes: []NodeResponse{},
-		Edges: []EdgeResponse{},
+		Nodes:         []NodeResponse{},
+		Edges:         []EdgeResponse{},
+		UnknownIPs:    []UnknownIPResponse{},
+		EntryServices: cfg.EntryServices,
 	}
 
 	/*
@@ -49,14 +54,11 @@ func BuildGraphResponse(
 
 	for _, edge := range graph.Edges {
 
-		/*
-			Register source node.
-		*/
-		nodeSet[edge.Source] = true
+		if !shouldShowEdge(edge.Source, edge.Destination) {
+			continue
+		}
 
-		/*
-			Register destination node.
-		*/
+		nodeSet[edge.Source] = true
 		nodeSet[edge.Destination] = true
 
 		/*
@@ -121,6 +123,24 @@ func BuildGraphResponse(
 				ID: node,
 			},
 		)
+	}
+
+	if unknown != nil {
+		unknown.Mu.RLock()
+		for _, entry := range unknown.Entries {
+			dests := make(map[string]int, len(entry.Destinations))
+			for k, v := range entry.Destinations {
+				dests[k] = v
+			}
+			response.UnknownIPs = append(response.UnknownIPs, UnknownIPResponse{
+				IP:                entry.IP,
+				ConnectionCount:   entry.ConnectionCount,
+				ActiveConnections: entry.ActiveConnections,
+				Destinations:      dests,
+				LastSeen:          entry.LastSeen.Format(time.RFC3339),
+			})
+		}
+		unknown.Mu.RUnlock()
 	}
 
 	return response

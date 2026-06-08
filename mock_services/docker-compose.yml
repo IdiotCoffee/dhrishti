@@ -30,7 +30,4 @@ services:
   payment-service:
     build: ./payment-service
 
-  client:
-    build: ./client
-    depends_on:
-      - gateway
+  # Load is generated externally via k6 — see k6/README.md

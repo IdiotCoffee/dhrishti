@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"dhrishti/config"
 	"dhrishti/resolver"
 	"dhrishti/types"
 	"log"
@@ -74,6 +75,7 @@ func RecordNewConnection(
 	event *resolver.EnrichedRuntimeEvent,
 ) {
 	HandleConnect(tracker, event)
+
 	graph.RecordConnect(
 		event.SourceService,
 		event.DestinationService,
@@ -122,6 +124,8 @@ Computes:
 func HandleClose(
 	tracker *types.FlowTracker,
 	graph *types.Graph,
+	cfg config.Config,
+	unknown *types.UnknownIPRegistry,
 	event *resolver.EnrichedRuntimeEvent,
 ) {
 
@@ -183,6 +187,8 @@ func HandleClose(
 		Destination: flow.DestinationService,
 	}
 	flowSnapshot := *flow
+
+	TrackClientIPClose(&flowSnapshot, cfg, unknown)
 
 	tracker.Mu.Unlock()
 

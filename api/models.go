@@ -20,8 +20,18 @@ API consumers should ONLY receive:
 stable semantic state.
 */
 type GraphResponse struct {
-	Nodes []NodeResponse `json:"nodes"`
-	Edges []EdgeResponse `json:"edges"`
+	Nodes         []NodeResponse      `json:"nodes"`
+	Edges         []EdgeResponse      `json:"edges"`
+	UnknownIPs    []UnknownIPResponse `json:"unknown_ips"`
+	EntryServices []string            `json:"entry_services"`
+}
+
+type UnknownIPResponse struct {
+	IP                string         `json:"ip"`
+	ConnectionCount   int            `json:"connection_count"`
+	ActiveConnections int            `json:"active_connections"`
+	Destinations      map[string]int `json:"destinations"`
+	LastSeen          string         `json:"last_seen"`
 }
 
 /*
