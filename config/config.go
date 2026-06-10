@@ -13,7 +13,7 @@ type Config struct {
 
 func Load() Config {
 	cfg := Config{
-		EntryServices: []string{"gateway"},
+		EntryServices: []string{"api-gateway"},
 	}
 
 	path := os.Getenv("DHRISHTI_CONFIG")

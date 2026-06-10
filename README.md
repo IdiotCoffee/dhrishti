@@ -57,8 +57,8 @@ TCP state
 Dhrishti converts these primitives into higher-level architectural relationships such as:
 
 ```text
-gateway → auth-service
-gateway → product-service
+api-gateway → auth-service
+api-gateway → flash-sale-service → inventory-service
 order-service → payment-service
 ```
 
@@ -168,18 +168,24 @@ This enables the system to infer:
 
 # Example Test Architecture
 
-Dhrishti was tested against a mock distributed system containing:
+Dhrishti is tested against a **flash-sale e-commerce** mock stack (`mock_services/`) with **15 microservices**:
 
-* API gateway fanout,
-* authentication service,
-* product service,
-* inventory service,
-* payment service,
-* retry behavior,
-* latency spikes,
-* and intermittent failures.
+```text
+k6 (host) → api-gateway
+                ├→ auth-service, user-service, analytics-service
+                ├→ product-catalog ← search-service, recommendation-service
+                ├→ flash-sale-service → inventory-service, pricing-service
+                ├→ cart-service → inventory-service
+                └→ order-service → payment, shipping, notification
+```
 
-This allowed the graph engine to reconstruct and visualize runtime communication paths dynamically.
+The benchmark suite (`benchmark/`) drives realistic traffic with k6 — configurable **50k–100k virtual users** simulating a flash sale (browse, search, reserve, checkout). Dhrishti reconstructs the full dependency mesh under load.
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| Mock microservices | `mock_services/` | 15-service Docker Compose stack |
+| Load testing | `benchmark/` | k6 flash-sale scenarios + A/B scripts |
+| Benchmark guide | `docs/BENCHMARK.md` | Comparison methodology |
 
 ---
 
@@ -213,18 +219,26 @@ cd ebpf/
 make
 ```
 
-Start the distributed test environment:
+Start the flash-sale microservices stack:
 
 ```bash
 cd mock_services/
-docker compose up --build
+docker compose up --build --remove-orphans
 ```
 
 Run the telemetry engine:
 
 ```bash
-# from root
+# from repo root
 sudo go run main.go
+```
+
+Run a load test (separate terminal):
+
+```bash
+cd benchmark/
+./baseline.sh              # Dhrishti OFF (run first)
+sudo ./benchmark.sh        # Dhrishti ON (comparison vs baseline)
 ```
 
 Then open the frontend and observe the live runtime dependency graph.

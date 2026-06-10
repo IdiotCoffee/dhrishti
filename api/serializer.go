@@ -1,6 +1,11 @@
 package api
 
 import (
+	"bytes"
+	"net"
+	"sort"
+	"strings"
+
 	"dhrishti/config"
 	"dhrishti/types"
 	"time"
@@ -141,7 +146,20 @@ func BuildGraphResponse(
 			})
 		}
 		unknown.Mu.RUnlock()
+
+		sort.Slice(response.UnknownIPs, func(i, j int) bool {
+			return compareClientIPs(response.UnknownIPs[i].IP, response.UnknownIPs[j].IP) < 0
+		})
 	}
 
 	return response
+}
+
+func compareClientIPs(a, b string) int {
+	ipA := net.ParseIP(a)
+	ipB := net.ParseIP(b)
+	if ipA != nil && ipB != nil {
+		return bytes.Compare(ipA.To16(), ipB.To16())
+	}
+	return strings.Compare(a, b)
 }

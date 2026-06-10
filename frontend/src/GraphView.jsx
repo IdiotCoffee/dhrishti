@@ -118,8 +118,8 @@ function edgeTooltip(edge, ctx) {
     `Heat: ${HEAT[level].label}`,
     `Connections: ${edge.connection_count ?? 0}`,
     `Active: ${edge.active_connections ?? 0}`,
-    `RPS: ${formatRps(edge.requests_per_second ?? 0)} (comparable with k6 req/s)`,
-    `TCP avg: ${edge.recent_average_latency_ms ?? 0}ms (not HTTP latency)`,
+    `RPS: ${formatRps(edge.requests_per_second ?? 0)}`,
+    `TCP avg: ${edge.recent_average_latency_ms ?? 0}ms`,
     `TCP p95: ${edge.p95_latency_ms ?? 0}ms`,
     `Failure: ${formatFailRate(edge.failure_rate ?? 0)}`,
   ].join("\n");
@@ -255,11 +255,8 @@ function Legend() {
       <div style={{ fontWeight: 600, color: "#1e293b", marginBottom: 8 }}>
         Service graph
       </div>
-      <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 6 }}>
-        Edge color = heat · dashed = live · all times are TCP
-      </div>
-      <div style={{ fontSize: 10, color: "#64748b", marginBottom: 8, lineHeight: 1.35 }}>
-        RPS ≈ k6 req/s at client edge. Latency is TCP session duration, not HTTP.
+      <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 8 }}>
+        Edge color = heat · dashed = live
       </div>
       {["normal", "elevated", "hot"].map((level) => (
         <div style={row} key={level}>

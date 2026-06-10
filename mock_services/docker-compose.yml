@@ -1,33 +1,139 @@
-version: "3.9"
+# Flash-sale e-commerce microservices stack for Dhrishti integration tests.
+# Load is generated externally via k6 — see ../benchmark/README.md
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  networks:
+    - storefront
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+    interval: 15s
+    timeout: 5s
+    retries: 3
+    start_period: 20s
 
 services:
-  gateway:
-    build: ./gateway
+  api-gateway:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: api-gateway/Dockerfile
     ports:
       - "8080:8080"
     depends_on:
-      - auth-service
-      - product-service
-      - order-service
+      auth-service: { condition: service_healthy }
+      product-catalog: { condition: service_healthy }
+      flash-sale-service: { condition: service_healthy }
+      search-service: { condition: service_healthy }
+      recommendation-service: { condition: service_healthy }
+      cart-service: { condition: service_healthy }
+      order-service: { condition: service_healthy }
+      user-service: { condition: service_healthy }
+      analytics-service: { condition: service_healthy }
 
   auth-service:
-    build: ./auth-service
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: auth-service/Dockerfile
 
-  product-service:
-    build: ./product-service
-    depends_on:
-      - inventory-service
+  user-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: user-service/Dockerfile
+
+  product-catalog:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: product-catalog/Dockerfile
 
   inventory-service:
-    build: ./inventory-service
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: inventory-service/Dockerfile
+
+  pricing-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: pricing-service/Dockerfile
+
+  cart-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: cart-service/Dockerfile
+    depends_on:
+      inventory-service: { condition: service_healthy }
 
   order-service:
-    build: ./order-service
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: order-service/Dockerfile
     depends_on:
-      - inventory-service
-      - payment-service
+      inventory-service: { condition: service_healthy }
+      payment-service: { condition: service_healthy }
+      shipping-service: { condition: service_healthy }
+      notification-service: { condition: service_healthy }
 
   payment-service:
-    build: ./payment-service
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: payment-service/Dockerfile
 
-  # Load is generated externally via k6 — see k6/README.md
+  notification-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
+
+  search-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: search-service/Dockerfile
+    depends_on:
+      product-catalog: { condition: service_healthy }
+
+  recommendation-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: recommendation-service/Dockerfile
+    depends_on:
+      product-catalog: { condition: service_healthy }
+
+  shipping-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: shipping-service/Dockerfile
+
+  analytics-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: analytics-service/Dockerfile
+
+  flash-sale-service:
+    <<: *service-defaults
+    build:
+      context: .
+      dockerfile: flash-sale-service/Dockerfile
+    environment:
+      INVENTORY_SERVICE_URL: http://inventory-service:8080
+      PRICING_SERVICE_URL: http://pricing-service:8080
+      FLASH_SALE_START_EPOCH: "0"
+      FLASH_SALE_DURATION_SEC: "7200"
+    depends_on:
+      inventory-service: { condition: service_healthy }
+      pricing-service: { condition: service_healthy }
+
+networks:
+  storefront:
+    driver: bridge

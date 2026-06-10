@@ -1,27 +1,21 @@
-import random
-import time
+from flask import Flask, jsonify
 
-from flask import Flask
+from common.latency import maybe_fail, simulate
 
 app = Flask(__name__)
 
-"""
-Payment — simulates a slow external provider; connection stays open for the sleep.
-"""
+
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok", "service": "payment-service"})
 
 
 @app.route("/pay")
 def pay():
-    # Keep payment mixed: often fast, sometimes slow enough to push p95 >1s.
-    if random.random() < 0.8:
-        time.sleep(random.uniform(0.15, 0.6))
-    else:
-        time.sleep(random.uniform(1.3, 2.4))
-
-    if random.random() < 0.1:
-        return {"status": "payment-failed"}, 500
-
-    return {"status": "success"}
+    simulate("normal", spike_chance=0.15)
+    if maybe_fail(0.09):
+        return jsonify({"error": "payment gateway timeout"}), 500
+    return jsonify({"charged": True, "amount": 29.99, "provider": "mock-stripe"})
 
 
 if __name__ == "__main__":

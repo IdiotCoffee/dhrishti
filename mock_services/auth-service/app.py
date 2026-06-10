@@ -1,28 +1,20 @@
-import random
-import time
+from flask import Flask, jsonify
 
-from flask import Flask
+from common.latency import simulate
 
 app = Flask(__name__)
 
-"""
-Auth service — holds the TCP connection open while "validating"
-so the observability graph can show active_connections on the edge.
-"""
+
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok", "service": "auth-service"})
 
 
 @app.route("/auth")
-def auth():
-    # Keep this edge mostly fast (<1s p95 target), with rare slow spikes.
-    if random.random() < 0.97:
-        time.sleep(random.uniform(0.12, 0.45))
-    else:
-        time.sleep(random.uniform(1.2, 1.8))
-
-    return {
-        "authenticated": True,
-        "user": "demo-user",
-    }
+@app.route("/validate")
+def validate():
+    simulate("fast", spike_chance=0.03)
+    return jsonify({"valid": True, "token": "mock-jwt", "user_id": "user-42"})
 
 
 if __name__ == "__main__":

@@ -1,52 +1,58 @@
 import time
 
-import requests
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
+
+from common.http_client import get_json, post_json
+from common.latency import simulate
 
 app = Flask(__name__)
 
-"""
-Order fans out to inventory then payment (with one retry).
-Sequential slow downstream calls keep multiple edges active at once.
-"""
+INVENTORY = "http://inventory-service:8080"
+PAYMENT = "http://payment-service:8080"
+SHIPPING = "http://shipping-service:8080"
+NOTIFICATION = "http://notification-service:8080"
+
+
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok", "service": "order-service"})
 
 
 @app.route("/order")
-def order():
-    result = {"inventory": None, "payment": None}
+@app.route("/orders", methods=["POST"])
+def orders():
+    simulate("slow", spike_chance=0.08)
+    body = request.json or {}
+    product_id = body.get("product_id", "sku-1001")
 
-    try:
-        inventory = requests.get(
-            "http://inventory-service:8080/inventory",
-            timeout=5,
-        )
-        result["inventory"] = {
-            "status": inventory.status_code,
-            "body": inventory.json(),
-        }
-    except requests.exceptions.RequestException as e:
-        result["inventory"] = {"status": 502, "error": str(e)}
+    inventory = post_json(
+        f"{INVENTORY}/reserve/{product_id}",
+        {"product_id": product_id},
+        timeout=8,
+        name="inventory",
+    )
 
-    payment_response = None
-    for _ in range(2):
-        try:
-            payment = requests.get(
-                "http://payment-service:8080/pay",
-                timeout=5,
-            )
-            payment_response = {
-                "status": payment.status_code,
-                "body": payment.json(),
-            }
-            if payment.status_code == 200:
-                break
-        except requests.exceptions.RequestException as e:
-            payment_response = {"status": 502, "error": str(e)}
+    payment = None
+    for attempt in range(2):
+        payment = get_json(f"{PAYMENT}/pay", timeout=8, name="payment")
+        if payment.get("status") == 200:
+            break
+        time.sleep(0.15)
 
-        time.sleep(0.2)
+    shipping = get_json(f"{SHIPPING}/quote", timeout=6, name="shipping")
+    post_json(
+        f"{NOTIFICATION}/notify",
+        {"type": "order_placed", "product_id": product_id},
+        timeout=4,
+        name="notification",
+    )
 
-    result["payment"] = payment_response
-    return jsonify(result)
+    return jsonify({
+        "order_id": "ord-92831",
+        "inventory": inventory,
+        "payment": payment,
+        "shipping": shipping,
+    })
 
 
 if __name__ == "__main__":

@@ -1,17 +1,32 @@
-import React from "react";
+import React, { useMemo } from "react";
 
 const FONT = '"IBM Plex Sans", system-ui, sans-serif';
 
+function ipSortKey(ip) {
+  const parts = String(ip).split(".").map((p) => Number(p));
+  if (parts.length === 4 && parts.every((n) => !Number.isNaN(n))) {
+    return parts.reduce((acc, octet) => acc * 256 + octet, 0);
+  }
+  return null;
+}
+
+function compareIPs(a, b) {
+  const ka = ipSortKey(a);
+  const kb = ipSortKey(b);
+  if (ka != null && kb != null) return ka - kb;
+  return String(a).localeCompare(String(b));
+}
+
 function formatDestinations(dests) {
   if (!dests || Object.keys(dests).length === 0) return "—";
-  return Object.entries(dests)
-    .sort((a, b) => b[1] - a[1])
-    .map(([name, count]) => `${name} (${count})`)
-    .join(", ");
+  return Object.keys(dests).sort().join(", ");
 }
 
 export default function UnknownIPTable({ entries, entryServices }) {
-  const rows = entries ?? [];
+  const rows = useMemo(
+    () => [...(entries ?? [])].sort((a, b) => compareIPs(a.ip, b.ip)),
+    [entries],
+  );
   const entriesLabel = (entryServices ?? []).join(", ") || "entry services";
 
   return (
