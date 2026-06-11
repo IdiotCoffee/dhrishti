@@ -4,6 +4,35 @@
 
 ---
 
+## TL;DR
+
+**What it is:** Dhrishti watches live TCP traffic in the Linux kernel and rebuilds a real-time dependency graph of your microservices — no app instrumentation required.
+
+**Probes:** `tcp_connect` (outbound intent), `inet_csk_accept` (server accept), `tcp_close` (teardown / duration). Events flow through eBPF ring buffers into a Go correlation engine that resolves Docker container identities and computes per-edge RPS, latency, and failure rates.
+
+**Stack:** eBPF (C) → Go engine → WebSocket/HTTP API → React + Cytoscape.js. Historical metrics are written to **local Redis** (TimeSeries) and served by a **FastAPI** history API.
+
+**Prerequisite:** Redis running locally on `localhost:6379` (`redis-cli ping` → `PONG`). Redis Stack is required for TimeSeries (`TS.ADD` / `TS.RANGE`). Copy `.env.example` → `.env` to configure Redis URL and history settings (loaded by `make dhrishti`).
+
+**Run it (3 commands):**
+
+```bash
+# 1. Mock microservices
+cd mock_services && docker compose up --build
+
+# 2. Dhrishti (Go engine + History API + frontend)
+make dhrishti
+
+# 3. Simulate traffic (tunable)
+make run-simulation DURATION=4m VIRTUAL_USERS=500 CONNECTING_IPS=10
+```
+
+Open **http://localhost:5173** for the live graph. Go API: `:8090`. History API: `:8000`.
+
+**Benchmarks:** `benchmark/` runs k6 flash-sale load against a 15-service Docker stack. Use `make run-simulation` for a quick configurable run, or `benchmark/benchmark.sh` for the full A/B comparison vs baseline. See `docs/BENCHMARK.md`.
+
+---
+
 # Overview
 
 Dhrishti is a Linux-based observability system that infers service dependencies by tracing live TCP activity directly from the kernel using eBPF.
@@ -212,28 +241,9 @@ git clone <repo-url>
 cd dhrishti
 ```
 
-Build the eBPF probes:
+Then use the three commands from the TL;DR above. `make dhrishti` builds eBPF probes if needed, starts the Go engine (requires sudo for eBPF), the FastAPI history API on `:8000`, and the Vite frontend on `:5173`.
 
-```bash
-cd ebpf/
-make
-```
-
-Start the flash-sale microservices stack:
-
-```bash
-cd mock_services/
-docker compose up --build --remove-orphans
-```
-
-Run the telemetry engine:
-
-```bash
-# from repo root
-sudo go run main.go
-```
-
-Run a load test (separate terminal):
+For full A/B benchmark comparison:
 
 ```bash
 cd benchmark/
@@ -241,4 +251,4 @@ cd benchmark/
 sudo ./benchmark.sh        # Dhrishti ON (comparison vs baseline)
 ```
 
-Then open the frontend and observe the live runtime dependency graph.
+See `make help` for simulation tunables (`DURATION`, `VIRTUAL_USERS`, `CONNECTING_IPS`).

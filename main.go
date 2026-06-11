@@ -7,6 +7,7 @@ import (
 
 	"dhrishti/api"
 	"dhrishti/config"
+	"dhrishti/history"
 	"dhrishti/loader"
 	"dhrishti/resolver"
 	"dhrishti/telemetry"
@@ -80,6 +81,9 @@ func main() {
 		- /ws
 	*/
 	go api.StartServer(graph, unknownIPs, counter, cfg)
+
+	historyCfg := history.LoadConfig()
+	history.StartWriter(graph, unknownIPs, cfg, historyCfg)
 	/*
 		Runtime flow tracker.
 

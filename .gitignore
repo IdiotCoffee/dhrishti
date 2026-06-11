@@ -1,4 +1,6 @@
 # python
+.dhrishti/
+history-api/.venv/
 .drishti
 __pycache__/
 *.pyc

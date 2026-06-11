@@ -28,6 +28,10 @@ ensure_root() {
 
 # Distinct client IPs for Dhrishti sidebar (capped; k6 uses CLIENTS for volume).
 fleet_ips() {
+  if [[ -n "${CONNECTING_IPS:-}" ]]; then
+    echo "${CONNECTING_IPS}"
+    return
+  fi
   local n=$(( CLIENTS / 50 ))
   if [[ "${n}" -lt 5 ]]; then n=5; fi
   if [[ "${n}" -gt 20 ]]; then n=20; fi
@@ -119,20 +123,21 @@ start_fleet() {
 
   echo "Starting ${n} simulated client IPs on ${bridge_if} → ${BASE_URL}"
   echo "  IPs: ${ips}"
+  fleet_duration="${FLEET_DURATION:-280}"
   NUM_CLIENTS="${n}" \
     CLIENT_IPS="${ips}" \
     BRIDGE_IF="${bridge_if}" \
     RPS_PER_CLIENT="${rps}" \
-    DURATION=280 \
+    DURATION="${fleet_duration}" \
     BASE_URL="${BASE_URL}" \
     python3 "${FLEET_SCRIPT}" &
   FLEET_PID=$!
 }
 
 run_k6() {
-  local summary="$1" code
-  export CLIENTS BASE_URL
-  k6 run --summary-export "${summary}" "${K6_SCRIPT}" || {
+  local summary="$1" script="${2:-${K6_SCRIPT}}" code
+  export CLIENTS BASE_URL DURATION
+  k6 run --summary-export "${summary}" "${script}" || {
     code=$?
     # k6 exit 99 = thresholds crossed; run still produced a valid summary.
     if [[ "${code}" -eq 99 ]]; then
