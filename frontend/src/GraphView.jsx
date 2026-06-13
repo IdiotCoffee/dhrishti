@@ -1,6 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import CytoscapeComponent from "react-cytoscapejs";
+import cytoscape from "cytoscape";
+
+import ZoomSlider, { sliderToZoom, zoomToSlider } from "./ZoomSlider";
+import { FONT } from "./styles";
 
 const INITIAL_LAYOUT = {
   name: "cose",
@@ -10,8 +13,6 @@ const INITIAL_LAYOUT = {
   idealEdgeLength: 140,
   nodeOverlap: 24,
 };
-
-const FONT = '"IBM Plex Sans", system-ui, sans-serif';
 
 const HEAT = {
   normal: { color: "#22c55e", label: "Normal" },
@@ -129,36 +130,72 @@ function stableEdgeId(edge) {
   return `${edge.source}->${edge.target}:${edge.port}`;
 }
 
+function buildEdgeElement(edge, ctx) {
+  const hot = isEdgeHot(edge);
+  const rps = edge.requests_per_second ?? 0;
+
+  return {
+    group: "edges",
+    data: {
+      id: stableEdgeId(edge),
+      source: edge.source,
+      target: edge.target,
+      label: edgeLabel(edge),
+      tooltip: edgeTooltip(edge, ctx),
+      edgeColor: edgeLineColor(edge, ctx),
+      edgeWidth: edgeWidth(rps, ctx),
+    },
+    classes: hot ? "active-edge" : "idle-edge",
+  };
+}
+
 function graphToElements(graph, ctx) {
   const elements = [];
 
   graph.nodes.forEach((node) => {
     elements.push({
+      group: "nodes",
       data: { id: node.id, label: node.id },
       classes: classifyNode(node.id),
     });
   });
 
   graph.edges.forEach((edge) => {
-    const hot = isEdgeHot(edge);
-    const rps = edge.requests_per_second ?? 0;
-    const color = edgeLineColor(edge, ctx);
-
-    elements.push({
-      data: {
-        id: stableEdgeId(edge),
-        source: edge.source,
-        target: edge.target,
-        label: edgeLabel(edge),
-        tooltip: edgeTooltip(edge, ctx),
-        edgeColor: color,
-        edgeWidth: edgeWidth(rps, ctx),
-      },
-      classes: hot ? "active-edge" : "idle-edge",
-    });
+    elements.push(buildEdgeElement(edge, ctx));
   });
 
   return elements;
+}
+
+function graphStructureKey(graph) {
+  const nodes = graph.nodes.map((n) => n.id).sort().join(",");
+  const edges = graph.edges.map(stableEdgeId).sort().join(",");
+  return `${nodes}|${edges}`;
+}
+
+function updateEdgeMetrics(cy, edges, ctx) {
+  edges.forEach((edge) => {
+    const ele = cy.getElementById(stableEdgeId(edge));
+    if (ele.empty()) return;
+
+    const hot = isEdgeHot(edge);
+    const rps = edge.requests_per_second ?? 0;
+
+    ele.data({
+      label: edgeLabel(edge),
+      tooltip: edgeTooltip(edge, ctx),
+      edgeColor: edgeLineColor(edge, ctx),
+      edgeWidth: edgeWidth(rps, ctx),
+    });
+
+    if (hot) {
+      ele.addClass("active-edge");
+      ele.removeClass("idle-edge");
+    } else {
+      ele.removeClass("active-edge");
+      ele.addClass("idle-edge");
+    }
+  });
 }
 
 const STYLESHEET = [
@@ -311,101 +348,75 @@ function EdgeTooltip({ tooltip }) {
   );
 }
 
-export default function GraphView({ graph }) {
+export default function GraphView({ graph, showLegend = true, showZoom = true }) {
+  const containerRef = useRef(null);
   const cyRef = useRef(null);
-  const knownNodesRef = useRef(new Set());
+  const structureKeyRef = useRef("");
   const animFrameRef = useRef(null);
+  const zoomFromSliderRef = useRef(false);
+  const zoomSliderRef = useRef(42);
   const [tooltip, setTooltip] = useState(null);
+  const [zoomSlider, setZoomSlider] = useState(42);
+
+  zoomSliderRef.current = zoomSlider;
 
   const colorCtx = useMemo(
     () => buildColorContext(graph.edges),
     [graph.edges],
   );
 
-  const elements = useMemo(
-    () => graphToElements(graph, colorCtx),
-    [graph, colorCtx],
+  const structureKey = useMemo(
+    () => graphStructureKey(graph),
+    [graph.nodes, graph.edges],
   );
 
-  useEffect(() => {
-    const cy = cyRef.current;
-    if (!cy) return;
-
-    graph.edges.forEach((edge) => {
-      const ele = cy.getElementById(stableEdgeId(edge));
-      if (ele.empty()) return;
-
-      const hot = isEdgeHot(edge);
-      const rps = edge.requests_per_second ?? 0;
-
-      ele.data({
-        label: edgeLabel(edge),
-        tooltip: edgeTooltip(edge, colorCtx),
-        edgeColor: edgeLineColor(edge, colorCtx),
-        edgeWidth: edgeWidth(rps, colorCtx),
-      });
-
-      if (hot) {
-        ele.addClass("active-edge");
-        ele.removeClass("idle-edge");
-      } else {
-        ele.removeClass("active-edge");
-        ele.addClass("idle-edge");
-      }
+  const applyZoom = useCallback((sliderValue, cy = cyRef.current) => {
+    if (!cy || cy.width() === 0) return;
+    zoomFromSliderRef.current = true;
+    const level = sliderToZoom(sliderValue);
+    cy.zoom({
+      level,
+      renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 },
     });
-  }, [graph, colorCtx]);
+    requestAnimationFrame(() => {
+      zoomFromSliderRef.current = false;
+    });
+  }, []);
+
+  const handleZoomChange = (value) => {
+    setZoomSlider(value);
+    applyZoom(value);
+  };
 
   useEffect(() => {
-    const cy = cyRef.current;
-    if (!cy || graph.nodes.length === 0) return;
+    const container = containerRef.current;
+    if (!container) return undefined;
 
-    const currentIds = new Set(graph.nodes.map((n) => n.id));
-    const newIds = [...currentIds].filter((id) => !knownNodesRef.current.has(id));
-
-    if (knownNodesRef.current.size === 0) {
-      cy.layout(INITIAL_LAYOUT).run();
-      knownNodesRef.current = new Set(currentIds);
-      return;
-    }
-
-    if (newIds.length === 0) return;
-
-    const saved = {};
-    cy.nodes().forEach((n) => {
-      if (!newIds.includes(n.id())) {
-        saved[n.id()] = n.position();
-      }
+    const cy = cytoscape({
+      container,
+      elements: [],
+      style: STYLESHEET,
+      wheelSensitivity: 0.2,
     });
-
-    cy.layout(INITIAL_LAYOUT).run();
-    cy.one("layoutstop", () => {
-      Object.entries(saved).forEach(([id, pos]) => {
-        cy.getElementById(id).position(pos);
-      });
-    });
-
-    newIds.forEach((id) => knownNodesRef.current.add(id));
-  }, [graph]);
-
-  const handleCy = (cy) => {
     cyRef.current = cy;
 
-    if (!cy.scratch("_edgeHandlers")) {
-      cy.scratch("_edgeHandlers", true);
+    applyZoom(zoomSliderRef.current, cy);
 
-      cy.on("mouseover", "edge", (evt) => {
-        const pos = evt.renderedPosition;
-        setTooltip({
-          x: pos.x,
-          y: pos.y,
-          text: evt.target.data("tooltip"),
-        });
+    cy.on("zoom", () => {
+      if (zoomFromSliderRef.current) return;
+      setZoomSlider(zoomToSlider(cy.zoom()));
+    });
+
+    cy.on("mouseover", "edge", (evt) => {
+      const pos = evt.renderedPosition;
+      setTooltip({
+        x: pos.x,
+        y: pos.y,
+        text: evt.target.data("tooltip"),
       });
+    });
 
-      cy.on("mouseout", "edge", () => setTooltip(null));
-    }
-
-    if (animFrameRef.current != null) return;
+    cy.on("mouseout", "edge", () => setTooltip(null));
 
     let dashOffset = 0;
     const tick = () => {
@@ -418,27 +429,53 @@ export default function GraphView({ graph }) {
       animFrameRef.current = requestAnimationFrame(tick);
     };
     animFrameRef.current = requestAnimationFrame(tick);
-  };
 
-  useEffect(() => {
     return () => {
       if (animFrameRef.current != null) {
         cancelAnimationFrame(animFrameRef.current);
         animFrameRef.current = null;
       }
+      cy.destroy();
+      cyRef.current = null;
+      structureKeyRef.current = "";
     };
-  }, []);
+  }, [applyZoom]);
+
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+
+    if (graph.nodes.length === 0) {
+      cy.elements().remove();
+      structureKeyRef.current = "";
+      return;
+    }
+
+    if (structureKey !== structureKeyRef.current) {
+      cy.batch(() => {
+        cy.elements().remove();
+        cy.add(graphToElements(graph, colorCtx));
+      });
+      structureKeyRef.current = structureKey;
+      if (graph.edges.length > 0) {
+        cy.layout(INITIAL_LAYOUT).run();
+      }
+      return;
+    }
+
+    updateEdgeMetrics(cy, graph.edges, colorCtx);
+  }, [graph, colorCtx, structureKey]);
 
   return (
     <div style={{ width: "100%", height: "100%", position: "relative" }}>
-      <Legend />
+      {showLegend && <Legend />}
+      {showZoom && (
+        <ZoomSlider value={zoomSlider} onChange={handleZoomChange} />
+      )}
       <EdgeTooltip tooltip={tooltip} />
-      <CytoscapeComponent
-        cy={handleCy}
-        elements={elements}
-        stylesheet={STYLESHEET}
+      <div
+        ref={containerRef}
         style={{ width: "100%", height: "100%" }}
-        wheelSensitivity={0.2}
       />
     </div>
   );

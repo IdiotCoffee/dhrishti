@@ -1,5 +1,5 @@
 # Flash-sale e-commerce microservices stack for Dhrishti integration tests.
-# Load is generated externally via k6 — see ../benchmark/README.md
+# Load is generated externally via k6 — see ../docs/BENCHMARK.md
 
 x-service-defaults: &service-defaults
   restart: unless-stopped

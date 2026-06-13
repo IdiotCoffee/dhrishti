@@ -2,7 +2,7 @@
 
 : "${SCRIPT_DIR:=$(cd "$(dirname "${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}")" && pwd)}"
 
-CLIENTS="${CLIENTS:-500}"
+CLIENTS="${VIRTUAL_USERS:-${CLIENTS:-200}}"
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 GATEWAY_HEALTH="${BASE_URL}/health"
 DHRISHTI_URL="${DHRISHTI_URL:-http://localhost:8090}"

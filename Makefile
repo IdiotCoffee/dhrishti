@@ -5,7 +5,7 @@ ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 # Simulation tunables (override on CLI):
 #   make run-simulation DURATION=10m VIRTUAL_USERS=1000 CONNECTING_IPS=15
 DURATION        ?= 4m
-VIRTUAL_USERS   ?= 500
+VIRTUAL_USERS   ?= 200
 CONNECTING_IPS  ?=
 
 help:

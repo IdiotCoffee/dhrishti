@@ -8,13 +8,9 @@
 
 **What it is:** Dhrishti watches live TCP traffic in the Linux kernel and rebuilds a real-time dependency graph of your microservices — no app instrumentation required.
 
-**Probes:** `tcp_connect` (outbound intent), `inet_csk_accept` (server accept), `tcp_close` (teardown / duration). Events flow through eBPF ring buffers into a Go correlation engine that resolves Docker container identities and computes per-edge RPS, latency, and failure rates.
+**Stack:** eBPF (C) → Go engine → WebSocket/HTTP API → React + Cytoscape.js. Historical metrics go to **local Redis** (TimeSeries) and are served by a **FastAPI** history API.
 
-**Stack:** eBPF (C) → Go engine → WebSocket/HTTP API → React + Cytoscape.js. Historical metrics are written to **local Redis** (TimeSeries) and served by a **FastAPI** history API.
-
-**Prerequisite:** Redis running locally on `localhost:6379` (`redis-cli ping` → `PONG`). Redis Stack is required for TimeSeries (`TS.ADD` / `TS.RANGE`). Copy `.env.example` → `.env` to configure Redis URL and history settings (loaded by `make dhrishti`).
-
-**Run it (3 commands):**
+**Daily workflow (after first-time setup):**
 
 ```bash
 # 1. Mock microservices
@@ -24,32 +20,117 @@ cd mock_services && docker compose up --build
 make dhrishti
 
 # 3. Simulate traffic (tunable)
-make run-simulation DURATION=4m VIRTUAL_USERS=500 CONNECTING_IPS=10
+make run-simulation DURATION=15m VIRTUAL_USERS=200 CONNECTING_IPS=10
 ```
 
-Open **http://localhost:5173** for the live graph. Go API: `:8090`. History API: `:8000`.
+Open **http://localhost:5173** — **Live graph** tab for real-time topology, **Timeline** tab to replay a time window.
 
-**Benchmarks:** `benchmark/` runs k6 flash-sale load against a 15-service Docker stack. Use `make run-simulation` for a quick configurable run, or `benchmark/benchmark.sh` for the full A/B comparison vs baseline. See `docs/BENCHMARK.md`.
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost:5173 |
+| Go engine API | http://localhost:8090 |
+| History API | http://localhost:8000 |
+| Mock api-gateway | http://localhost:8080 |
 
 ---
 
-# Overview
+## First-time setup
+
+Run these once on a fresh clone (Linux only — eBPF requires it):
+
+### 1. System dependencies
+
+| Tool | Version | Notes |
+|------|---------|-------|
+| **Linux** | kernel 5.8+ | eBPF probes attach here |
+| **Go** | 1.21+ | Engine |
+| **Python 3** | 3.10+ | History API (venv created automatically) |
+| **Node.js + npm** | 18+ | Frontend (`npm install` runs automatically) |
+| **Docker + Compose** | current | Mock microservices |
+| **Redis Stack** | local | `redis-cli ping` → `PONG`; must support TimeSeries (`TS.ADD`) |
+| **k6** | current | Load tests — [install guide](https://grafana.com/docs/k6/latest/set-up/install-k6/) |
+| **clang/llvm, libbpf** | — | eBPF probe build (`make ebpf`) |
+| **sudo** | — | Required for eBPF and multi-IP benchmark client fleet |
+
+### 2. Clone and configure
+
+```bash
+git clone <repo-url>
+cd dhrishti
+
+cp .env.example .env    # edit Redis URL / history settings if needed
+make ebpf               # build eBPF probes (first time, or after probe changes)
+```
+
+`.env` is gitignored. `make dhrishti` loads it automatically.
+
+`go.mod` / `go.sum` are committed — do **not** delete them. They pin Go dependencies. The compiled `main` binary and `frontend/node_modules/` are **not** in the repo; they are built locally.
+
+### 3. Start Redis
+
+Ensure Redis is running locally with TimeSeries support (Redis Stack):
+
+```bash
+redis-cli ping    # expect PONG
+```
+
+### 4. Verify
+
+```bash
+cd mock_services && docker compose up --build    # terminal 1
+make dhrishti                                     # terminal 2 (Ctrl+C to stop)
+make run-simulation DURATION=4m VIRTUAL_USERS=150 # terminal 3
+```
+
+`make dhrishti` automatically:
+
+- builds eBPF probes if missing (`make ebpf`)
+- creates `history-api/.venv` and installs Python deps
+- runs `npm install` in `frontend/` if `node_modules/` is missing
+- starts the Go engine (sudo), History API, and Vite dev server
+
+Logs: `.dhrishti/logs/` (gitignored).
+
+---
+
+## Makefile commands
+
+```bash
+make help              # list all targets
+make ebpf              # build eBPF probes only
+make dhrishti          # start engine + history API + frontend
+make stop-dhrishti     # kill background Dhrishti processes
+make run-simulation    # k6 load against mock stack (Dhrishti must be running)
+```
+
+Simulation tunables:
+
+```bash
+make run-simulation DURATION=15m VIRTUAL_USERS=200 CONNECTING_IPS=10
+```
+
+---
+
+## Documentation
+
+| Doc | Contents |
+|-----|----------|
+| [docs/MOCK_SERVICES.md](./docs/MOCK_SERVICES.md) | 15-service stack architecture, API routes, Docker usage |
+| [docs/BENCHMARK.md](./docs/BENCHMARK.md) | k6 load tests, A/B benchmark workflow, metric comparison |
+
+---
+
+## Overview
 
 Dhrishti is a Linux-based observability system that infers service dependencies by tracing live TCP activity directly from the kernel using eBPF.
 
-Instead of relying on:
-
-* manually maintained architecture diagrams,
-* application-level tracing instrumentation,
-* or predefined service topology,
-
-Dhrishti observes actual runtime behavior and reconstructs communication relationships dynamically.
+Instead of relying on manually maintained architecture diagrams, application-level tracing instrumentation, or predefined service topology, Dhrishti observes actual runtime behavior and reconstructs communication relationships dynamically.
 
 The system captures kernel-level TCP lifecycle events, correlates them into runtime flows, enriches them with container metadata, and exposes a live dependency graph of the running system.
 
 ---
 
-# Architecture
+## Architecture
 
 ```text
 Docker Workloads
@@ -64,26 +145,18 @@ Flow Correlation Engine
         ↓
 Runtime Graph State
         ↓
-WebSocket Streaming
+WebSocket Streaming + Redis History
         ↓
-Cytoscape.js Visualization
+React / Cytoscape.js Visualization
 ```
 
 ---
 
-# Runtime Model
+## Runtime model
 
-The Linux kernel only exposes low-level primitives such as:
+The Linux kernel only exposes low-level primitives such as processes, sockets, IP addresses, ports, and TCP state.
 
-```text
-processes
-sockets
-IP addresses
-ports
-TCP state
-```
-
-Dhrishti converts these primitives into higher-level architectural relationships such as:
+Dhrishti converts these into architectural relationships:
 
 ```text
 api-gateway → auth-service
@@ -91,113 +164,39 @@ api-gateway → flash-sale-service → inventory-service
 order-service → payment-service
 ```
 
-This allows the system to reconstruct distributed service topology dynamically from runtime execution itself.
+---
+
+## eBPF probes
+
+| Probe | Purpose |
+|-------|---------|
+| `tcp_connect` | Outbound connection attempts — foundation of dependency inference |
+| `inet_csk_accept` | Server-side accept — client/server correlation |
+| `tcp_close` | Connection teardown — duration, churn, short-lived flows |
+| `tcp_state` | State transitions (ESTABLISHED, FIN_WAIT, TIME_WAIT) |
 
 ---
 
-# eBPF Probes
-
-Dhrishti currently uses multiple eBPF probes to observe different stages of the TCP lifecycle.
-
-## `tcp_connect`
-
-Tracks outbound TCP connection attempts.
-
-This forms the foundation of dependency inference by identifying:
-
-* which process initiated communication,
-* destination IPs,
-* and destination ports.
-
----
-
-## `inet_csk_accept`
-
-Tracks server-side socket acceptance.
-
-This provides the server perspective of a connection and enables:
-
-* connection validation,
-* client/server correlation,
-* and failed connection inference.
-
----
-
-## `tcp_close`
-
-Tracks TCP connection teardown events.
-
-This allows Dhrishti to compute:
-
-* connection duration,
-* active flow counts,
-* retry churn,
-* and short-lived connection behavior.
-
----
-
-## `tcp_state`
-
-Tracks TCP state transitions such as:
-
-```text
-ESTABLISHED
-FIN_WAIT
-TIME_WAIT
-```
-
-This adds deeper visibility into runtime connection behavior.
-
----
-
-# Flow Correlation
-
-Raw kernel telemetry is stateless.
-
-Individual events only indicate:
-
-```text
-connect happened
-accept happened
-close happened
-```
-
-Dhrishti correlates these events into logical runtime flows.
-
-This enables the system to infer:
-
-* successful connections,
-* failed handshakes,
-* flow duration,
-* rolling latency metrics,
-* and dependency behavior over time.
-
----
-
-# Current Features
+## Current features
 
 * Live TCP dependency inference
 * Docker-aware service resolution
-* Runtime flow tracking
-* Connection lifecycle reconstruction
-* Rolling latency calculations
-* P95 latency tracking
+* Runtime flow tracking and rolling latency (P95)
 * WebSocket-based graph streaming
-* Live Cytoscape visualization
+* Live Cytoscape visualization with timeline replay
+* Redis TimeSeries history (metrics + graph snapshots every ~10s)
 
 ---
 
-# Example Runtime Graph
-
+## Example runtime graph
 
 ![Runtime Graph](./assets/graph.png)
 
-
 ---
 
-# Example Test Architecture
+## Example test architecture
 
-Dhrishti is tested against a **flash-sale e-commerce** mock stack (`mock_services/`) with **15 microservices**:
+Dhrishti is tested against a **flash-sale e-commerce** mock stack with **15 microservices**:
 
 ```text
 k6 (host) → api-gateway
@@ -208,47 +207,49 @@ k6 (host) → api-gateway
                 └→ order-service → payment, shipping, notification
 ```
 
-The benchmark suite (`benchmark/`) drives realistic traffic with k6 — configurable **50k–100k virtual users** simulating a flash sale (browse, search, reserve, checkout). Dhrishti reconstructs the full dependency mesh under load.
+Entry service config (`dhrishti.json`):
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| Mock microservices | `mock_services/` | 15-service Docker Compose stack |
-| Load testing | `benchmark/` | k6 flash-sale scenarios + A/B scripts |
-| Benchmark guide | `docs/BENCHMARK.md` | Comparison methodology |
+```json
+{ "entry_services": ["api-gateway"] }
+```
 
 ---
 
-# Tech Stack
+## Tech stack
 
-| Layer                  | Technology        |
-| ---------------------- | ----------------- |
-| Kernel Instrumentation | eBPF              |
-| Probe Language         | C                 |
-| Telemetry Engine       | Go                |
-| Runtime Metadata       | Docker Engine API |
-| Frontend               | React             |
-| Visualization          | Cytoscape.js      |
-| Streaming              | WebSockets        |
+| Layer | Technology |
+|-------|------------|
+| Kernel instrumentation | eBPF (C) |
+| Telemetry engine | Go |
+| Runtime metadata | Docker Engine API |
+| History store | Redis TimeSeries |
+| History API | FastAPI |
+| Frontend | React + Cytoscape.js |
+| Streaming | WebSockets |
 
 ---
 
-# Running Dhrishti
+## Full A/B benchmark
 
-Clone the repository:
-
-```bash
-git clone <repo-url>
-cd dhrishti
-```
-
-Then use the three commands from the TL;DR above. `make dhrishti` builds eBPF probes if needed, starts the Go engine (requires sudo for eBPF), the FastAPI history API on `:8000`, and the Vite frontend on `:5173`.
-
-For full A/B benchmark comparison:
+For a formal baseline vs Dhrishti-ON comparison (not the quick simulation):
 
 ```bash
-cd benchmark/
-./baseline.sh              # Dhrishti OFF (run first)
-sudo ./benchmark.sh        # Dhrishti ON (comparison vs baseline)
+cd benchmark && ./baseline.sh              # Dhrishti OFF
+make dhrishti                               # other terminal
+cd benchmark && sudo ./benchmark.sh        # Dhrishti ON + report
 ```
 
-See `make help` for simulation tunables (`DURATION`, `VIRTUAL_USERS`, `CONNECTING_IPS`).
+See [docs/BENCHMARK.md](./docs/BENCHMARK.md) for methodology.
+
+---
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `Redis not reachable` | Start local Redis Stack on `:6379` |
+| `eBPF probes not built` | `make ebpf` |
+| Frontend blank / module errors | `cd frontend && npm install` |
+| History API 404 on timeline | Restart `make dhrishti` after pulling changes |
+| Simulation timeouts | Lower `VIRTUAL_USERS` (try 150–200) |
+| No timeline data | Dhrishti must run during the simulated window; snapshots every ~10s |

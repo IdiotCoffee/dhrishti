@@ -217,3 +217,44 @@ def graph_range(
         "timestamps": timestamps,
         "count": len(timestamps),
     }
+
+
+MAX_PLAYBACK_FRAMES = 500
+
+
+@app.get("/api/v1/graph/playback")
+def graph_playback(
+    start: str = Query(...),
+    end: str = Query(...),
+) -> dict[str, Any]:
+    """Return ordered graph snapshots in [start, end] for timeline replay."""
+    start_dt, end_dt = clamp_history_window(parse_time(start), parse_time(end))
+    members = rdb.zrangebyscore(
+        SNAPSHOTS_INDEX_KEY,
+        to_ms(start_dt),
+        to_ms(end_dt),
+    )
+
+    if len(members) > MAX_PLAYBACK_FRAMES:
+        step = max(1, len(members) // MAX_PLAYBACK_FRAMES)
+        members = members[::step]
+
+    frames: list[dict[str, Any]] = []
+    for member in members:
+        ms = int(member)
+        payload = rdb.get(f"dhrishti:snapshot:{member}")
+        if not payload:
+            continue
+        data = json.loads(payload)
+        frames.append({
+            "snapshot_ms": ms,
+            "timestamp": data.get("timestamp"),
+            "graph": data.get("graph", {}),
+        })
+
+    return {
+        "start": start_dt.isoformat(),
+        "end": end_dt.isoformat(),
+        "count": len(frames),
+        "frames": frames,
+    }

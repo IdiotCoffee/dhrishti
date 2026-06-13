@@ -23,7 +23,7 @@ check_stack
 
 if ! curl -sf "${DHRISHTI_URL}/metrics" >/dev/null 2>&1; then
   echo "ERROR: Dhrishti not reachable at ${DHRISHTI_URL}"
-  echo "Start it:  sudo go run main.go   (from repo root)"
+  echo "Start it:  make dhrishti   (from repo root)"
   exit 1
 fi
 

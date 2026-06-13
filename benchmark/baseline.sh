@@ -21,7 +21,7 @@ check_stack
 
 if curl -sf "${DHRISHTI_URL}/metrics" >/dev/null 2>&1; then
   echo "ERROR: Dhrishti is running at ${DHRISHTI_URL}"
-  echo "Stop it first:  Ctrl+C on 'sudo go run main.go'"
+  echo "Stop it first:  make stop-dhrishti   (or Ctrl+C on make dhrishti)"
   exit 1
 fi
 
@@ -48,4 +48,4 @@ print_k6_summary "${BASELINE_K6}"
 echo ""
 echo "Saved → ${BASELINE_K6}"
 echo ""
-echo "Next: start Dhrishti (sudo go run main.go) then run  ./benchmark.sh"
+echo "Next: start Dhrishti (make dhrishti) then run  ./benchmark.sh"

@@ -5,11 +5,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT_DIR="${ROOT}/benchmark"
 
 DURATION="${DURATION:-4m}"
-VIRTUAL_USERS="${VIRTUAL_USERS:-${CLIENTS:-500}}"
+VIRTUAL_USERS="${VIRTUAL_USERS:-200}"
 CONNECTING_IPS="${CONNECTING_IPS:-}"
-CLIENTS="${VIRTUAL_USERS}"
 
-export DURATION VIRTUAL_USERS CONNECTING_IPS CLIENTS
+# k6 reads VIRTUAL_USERS; do not inherit a stale CLIENTS from the shell.
+unset CLIENTS
+export DURATION VIRTUAL_USERS CONNECTING_IPS
 
 # shellcheck source=../benchmark/_lib.sh
 source "${SCRIPT_DIR}/_lib.sh"

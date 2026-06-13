@@ -1,18 +1,28 @@
-# python
+# --- Environment & local state ---
+.env
 .dhrishti/
-history-api/.venv/
 .drishti
+
+# --- Python ---
 __pycache__/
 *.pyc
+history-api/.venv/
 
-# ebpf build artifacts
+# --- Node / frontend ---
+node_modules/
+frontend/node_modules/
+frontend/dist/
+dist/
+
+# --- Go build artifacts ---
+main
+/dhrishti
+
+# --- eBPF build artifacts ---
 *.o
 vmlinux.h
 
-# editor
+# --- Editor / OS ---
 .vscode/
 .idea/
-
-# misc
 .DS_Store
-.env
