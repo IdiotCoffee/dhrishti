@@ -3,6 +3,7 @@
 *A runtime observability engine for dynamically reconstructing distributed system architecture using eBPF.*
 
 ![Runtime Graph](./assets/graph.png)
+![Timeline View](./assets/timeline.png)
 
 ---
 
