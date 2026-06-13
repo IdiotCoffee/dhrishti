@@ -2,6 +2,8 @@
 
 *A runtime observability engine for dynamically reconstructing distributed system architecture using eBPF.*
 
+![Runtime Graph](./assets/graph.png)
+
 ---
 
 ## TL;DR
@@ -23,7 +25,7 @@ make dhrishti
 make run-simulation DURATION=15m VIRTUAL_USERS=200 CONNECTING_IPS=10
 ```
 
-Open **http://localhost:5173** — **Live graph** tab for real-time topology, **Timeline** tab to replay a time window.
+Open **http://localhost:5173** — **Live graph** for real-time topology, **Timeline** for metric charts, **Replay** to step through historical graph snapshots.
 
 | Service | URL |
 |---------|-----|
@@ -66,13 +68,58 @@ make ebpf               # build eBPF probes (first time, or after probe changes)
 
 `go.mod` / `go.sum` are committed — do **not** delete them. They pin Go dependencies. The compiled `main` binary and `frontend/node_modules/` are **not** in the repo; they are built locally.
 
-### 3. Start Redis
+### 3. Start Redis Stack (required for Timeline)
 
-Ensure Redis is running locally with TimeSeries support (Redis Stack):
+The Timeline tab needs **Redis with the TimeSeries module** (`TS.ADD`, `TS.RANGE`). Plain Redis or Valkey without TimeSeries is not enough — the metric chart and timeline load will fail with `unknown command 'TS.RANGE'`.
+
+**Option A — Docker (recommended)**
+
+Stop any existing Redis on port 6379 first, then:
 
 ```bash
-redis-cli ping    # expect PONG
+docker run -d --name redis-stack \
+  -p 6379:6379 \
+  redis/redis-stack-server:latest
 ```
+
+**Option B — Arch Linux (AUR)**
+
+```bash
+yay -S redis-stack-server
+sudo systemctl enable --now redis-stack
+```
+
+**Option C — Other distros**
+
+Install [Redis Stack](https://redis.io/docs/latest/operate/oss_and_stack/install/install-stack/) (not plain `redis-server`).
+
+**Verify TimeSeries is active**
+
+```bash
+redis-cli ping
+# PONG
+
+redis-cli TS.INFO __probe__
+# Should NOT say "unknown command". A "key does not exist" error is fine.
+```
+
+**Connect Dhrishti to Redis**
+
+In `.env` (copy from `.env.example` if needed):
+
+```bash
+DHRISHTI_REDIS_URL=redis://localhost:6379
+```
+
+Both the Go engine (writes metrics + graph snapshots) and the FastAPI History API (reads them) use this URL. Restart `make dhrishti` after switching Redis.
+
+**What each Redis feature powers**
+
+| Feature | Redis commands | Used by |
+|---------|----------------|---------|
+| Metric charts (Timeline) | `TS.ADD`, `TS.RANGE` | Go writer + History API |
+| Graph replay snapshots | `SET`, `ZADD` | Go writer + History API |
+| Service list | `SADD`, `SMEMBERS` | Go writer + History API |
 
 ### 4. Verify
 
@@ -188,12 +235,6 @@ order-service → payment-service
 
 ---
 
-## Example runtime graph
-
-![Runtime Graph](./assets/graph.png)
-
----
-
 ## Example test architecture
 
 Dhrishti is tested against a **flash-sale e-commerce** mock stack with **15 microservices**:
@@ -247,7 +288,9 @@ See [docs/BENCHMARK.md](./docs/BENCHMARK.md) for methodology.
 
 | Symptom | Fix |
 |---------|-----|
-| `Redis not reachable` | Start local Redis Stack on `:6379` |
+| `Redis not reachable` | Start Redis Stack on `:6379` (see section 3 above) |
+| Timeline "Failed to load timeline data" | Redis missing TimeSeries — run `redis-cli TS.INFO __probe__`; if `unknown command`, switch to Redis Stack |
+| `[history] TS.CREATE ... unknown command` in engine log | Same as above — replace plain Redis/Valkey with Redis Stack |
 | `eBPF probes not built` | `make ebpf` |
 | Frontend blank / module errors | `cd frontend && npm install` |
 | History API 404 on timeline | Restart `make dhrishti` after pulling changes |

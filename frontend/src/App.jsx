@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 
 import GraphView from "./GraphView";
+import ReplayView from "./ReplayView";
 import TimelineView from "./TimelineView";
 import UnknownIPTable from "./UnknownIPTable";
 
@@ -10,6 +11,7 @@ import { FONT } from "./styles";
 const TABS = [
   { id: "live", label: "Live graph" },
   { id: "timeline", label: "Timeline" },
+  { id: "replay", label: "Replay" },
 ];
 
 export default function App() {
@@ -142,8 +144,10 @@ export default function App() {
               entryServices={graph.entry_services}
             />
           </>
-        ) : (
+        ) : tab === "timeline" ? (
           <TimelineView />
+        ) : (
+          <ReplayView />
         )}
       </div>
     </div>

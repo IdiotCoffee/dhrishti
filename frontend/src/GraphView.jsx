@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import cytoscape from "cytoscape";
 
-import ZoomSlider, { sliderToZoom, zoomToSlider } from "./ZoomSlider";
+import ZoomSlider, { MAX_ZOOM, MIN_ZOOM, sliderToZoom, zoomToSlider } from "./ZoomSlider";
 import { FONT } from "./styles";
 
 const INITIAL_LAYOUT = {
@@ -371,7 +371,9 @@ export default function GraphView({ graph, showLegend = true, showZoom = true })
   );
 
   const applyZoom = useCallback((sliderValue, cy = cyRef.current) => {
-    if (!cy || cy.width() === 0) return;
+    if (!cy) return;
+    cy.resize();
+    if (cy.width() === 0 || cy.height() === 0) return;
     zoomFromSliderRef.current = true;
     const level = sliderToZoom(sliderValue);
     cy.zoom({
@@ -397,6 +399,8 @@ export default function GraphView({ graph, showLegend = true, showZoom = true })
       elements: [],
       style: STYLESHEET,
       wheelSensitivity: 0.2,
+      minZoom: MIN_ZOOM,
+      maxZoom: MAX_ZOOM,
     });
     cyRef.current = cy;
 
@@ -430,7 +434,16 @@ export default function GraphView({ graph, showLegend = true, showZoom = true })
     };
     animFrameRef.current = requestAnimationFrame(tick);
 
+    const resizeObserver = new ResizeObserver(() => {
+      const instance = cyRef.current;
+      if (!instance) return;
+      instance.resize();
+      applyZoom(zoomSliderRef.current, instance);
+    });
+    resizeObserver.observe(container);
+
     return () => {
+      resizeObserver.disconnect();
       if (animFrameRef.current != null) {
         cancelAnimationFrame(animFrameRef.current);
         animFrameRef.current = null;
@@ -458,13 +471,19 @@ export default function GraphView({ graph, showLegend = true, showZoom = true })
       });
       structureKeyRef.current = structureKey;
       if (graph.edges.length > 0) {
-        cy.layout(INITIAL_LAYOUT).run();
+        const layout = cy.layout(INITIAL_LAYOUT);
+        layout.one("layoutstop", () => {
+          applyZoom(zoomSliderRef.current, cy);
+        });
+        layout.run();
+      } else {
+        applyZoom(zoomSliderRef.current, cy);
       }
       return;
     }
 
     updateEdgeMetrics(cy, graph.edges, colorCtx);
-  }, [graph, colorCtx, structureKey]);
+  }, [graph, colorCtx, structureKey, applyZoom]);
 
   return (
     <div style={{ width: "100%", height: "100%", position: "relative" }}>
