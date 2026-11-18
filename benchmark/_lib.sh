@@ -26,13 +26,14 @@ ensure_root() {
   fi
 }
 
-# Distinct client IPs for Dhrishti sidebar (capped; k6 uses CLIENTS for volume).
+# The simulated client IP count is independent of k6 VUs, but defaults to
+# their count for small demo runs. Cap the side traffic at 20 clients.
 fleet_ips() {
   if [[ -n "${CONNECTING_IPS:-}" ]]; then
     echo "${CONNECTING_IPS}"
     return
   fi
-  local n=$(( CLIENTS / 50 ))
+  local n="${CLIENTS}"
   if [[ "${n}" -lt 5 ]]; then n=5; fi
   if [[ "${n}" -gt 20 ]]; then n=20; fi
   echo "${n}"

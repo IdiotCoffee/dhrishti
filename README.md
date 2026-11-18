@@ -1,299 +1,92 @@
 # Dhrishti
 
-*A runtime observability engine for dynamically reconstructing distributed system architecture using eBPF.*
+Dhrishti watches TCP connections on a Linux machine and builds a live map of which services talk to each other. It uses eBPF, so the applications do not need tracing libraries or code changes.
 
-![Runtime Graph](./assets/graph.png)
-![Timeline View](./assets/timeline.png)
+The demo stack contains **15 mock services**. In the benchmark scenario, k6 can drive **10–20 virtual users** through the API gateway, while Dhrishti draws the service graph and records history for replay. The exact request rate and latency depend on the machine running the demo; the project does not claim a fixed performance result.
 
----
+## Screenshots
 
-## TL;DR
+![Live service graph](./assets/graph.png)
 
-**What it is:** Dhrishti watches live TCP traffic in the Linux kernel and rebuilds a real-time dependency graph of your microservices — no app instrumentation required.
+![Timeline view](./assets/timeline.png)
 
-**Stack:** eBPF (C) → Go engine → WebSocket/HTTP API → React + Cytoscape.js. Historical metrics go to **local Redis** (TimeSeries) and are served by a **FastAPI** history API.
+## Try the demo
 
-**Daily workflow (after first-time setup):**
+The project needs **three terminals** for a full live demo.
+
+First install the prerequisites below and build the eBPF probes once. Then, from the repository root, use:
 
 ```bash
-# 1. Mock microservices
+# Terminal 1: start the 15 mock services
 cd mock_services && docker compose up --build
 
-# 2. Dhrishti (Go engine + History API + frontend)
+# Terminal 2: start the engine, history API, and web app
 make dhrishti
 
-# 3. Simulate traffic (tunable)
-make run-simulation DURATION=15m VIRTUAL_USERS=200 CONNECTING_IPS=10
+# Terminal 3: send a short, light demo load
+make run-simulation DURATION=2m VIRTUAL_USERS=15
 ```
 
-Open **http://localhost:5173** — **Live graph** for real-time topology, **Timeline** for metric charts, **Replay** to step through historical graph snapshots.
+Open [http://localhost:5173](http://localhost:5173). The Live Graph shows current connections; Timeline and Replay use Redis history. The API gateway is at [http://localhost:8080](http://localhost:8080), the engine API at [http://localhost:8090](http://localhost:8090), and the history API at [http://localhost:8000](http://localhost:8000).
 
-| Service | URL |
-|---------|-----|
-| Frontend | http://localhost:5173 |
-| Go engine API | http://localhost:8090 |
-| History API | http://localhost:8000 |
-| Mock api-gateway | http://localhost:8080 |
+The 15 VUs above are k6's peak virtual users. The simulation also starts a separate client fleet with one source IP per VU, capped at 20 by default; these extra requests make multiple clients visible in the UI. k6 itself still appears under the host's Docker bridge IP, so the list can include that address as well. Creating the client IPs needs elevated privileges and may prompt for your password.
 
----
+To stop, press Ctrl+C in the Dhrishti terminal and run `docker compose down` from `mock_services`. Dhrishti writes logs to `.dhrishti/logs/`.
 
 ## First-time setup
 
-Run these once on a fresh clone (Linux only — eBPF requires it):
+Dhrishti needs Linux with a kernel that supports the eBPF features used by the probes (kernel 5.8 or newer). Install Go 1.21+, Python 3, Node.js and npm, Docker Compose, k6, clang/LLVM, `bpftool`, libbpf development files, and `make`. The running kernel must expose BTF at `/sys/kernel/btf/vmlinux`; `make ebpf` uses it to generate `ebpf/vmlinux.h` automatically before compiling the probes. You also need `sudo` access to load eBPF programs and configure the simulated client IPs. The mock services run in Docker; the engine resolves their container identities through the Docker Engine API.
 
-### 1. System dependencies
-
-| Tool | Version | Notes |
-|------|---------|-------|
-| **Linux** | kernel 5.8+ | eBPF probes attach here |
-| **Go** | 1.21+ | Engine |
-| **Python 3** | 3.10+ | History API (venv created automatically) |
-| **Node.js + npm** | 18+ | Frontend (`npm install` runs automatically) |
-| **Docker + Compose** | current | Mock microservices |
-| **Redis Stack** | local | `redis-cli ping` → `PONG`; must support TimeSeries (`TS.ADD`) |
-| **k6** | current | Load tests — [install guide](https://grafana.com/docs/k6/latest/set-up/install-k6/) |
-| **clang/llvm, libbpf** | — | eBPF probe build (`make ebpf`) |
-| **sudo** | — | Required for eBPF and multi-IP benchmark client fleet |
-
-### 2. Clone and configure
+Redis Stack is needed for historical charts and graph replay. A plain Redis server does not provide the TimeSeries commands this project uses. One simple local option is:
 
 ```bash
-git clone <repo-url>
-cd dhrishti
-
-cp .env.example .env    # edit Redis URL / history settings if needed
-make ebpf               # build eBPF probes (first time, or after probe changes)
-```
-
-`.env` is gitignored. `make dhrishti` loads it automatically.
-
-`go.mod` / `go.sum` are committed — do **not** delete them. They pin Go dependencies. The compiled `main` binary and `frontend/node_modules/` are **not** in the repo; they are built locally.
-
-### 3. Start Redis Stack (required for Timeline)
-
-The Timeline tab needs **Redis with the TimeSeries module** (`TS.ADD`, `TS.RANGE`). Plain Redis or Valkey without TimeSeries is not enough — the metric chart and timeline load will fail with `unknown command 'TS.RANGE'`.
-
-**Option A — Docker (recommended)**
-
-Stop any existing Redis on port 6379 first, then:
-
-```bash
-docker run -d --name redis-stack \
-  -p 6379:6379 \
-  redis/redis-stack-server:latest
-```
-
-**Option B — Arch Linux (AUR)**
-
-```bash
-yay -S redis-stack-server
-sudo systemctl enable --now redis-stack
-```
-
-**Option C — Other distros**
-
-Install [Redis Stack](https://redis.io/docs/latest/operate/oss_and_stack/install/install-stack/) (not plain `redis-server`).
-
-**Verify TimeSeries is active**
-
-```bash
+docker run -d --name redis-stack -p 6379:6379 redis/redis-stack-server:latest
 redis-cli ping
-# PONG
-
 redis-cli TS.INFO __probe__
-# Should NOT say "unknown command". A "key does not exist" error is fine.
 ```
 
-**Connect Dhrishti to Redis**
+The ping should return `PONG`; for `TS.INFO`, an error saying the key does not exist is fine, but `unknown command` means the server lacks the TimeSeries module. If you already have Redis Stack on port 6379, use that instance instead. Copy `.env.example` to `.env` if you need to change Redis or history settings; the defaults expect Redis at `redis://localhost:6379`.
 
-In `.env` (copy from `.env.example` if needed):
+Build the probes from the repository root. This now generates the missing `vmlinux.h` from the running kernel automatically, then compiles the four probes:
 
 ```bash
-DHRISHTI_REDIS_URL=redis://localhost:6379
+make ebpf
 ```
 
-Both the Go engine (writes metrics + graph snapshots) and the FastAPI History API (reads them) use this URL. Restart `make dhrishti` after switching Redis.
+Then use the three-terminal demo above. `make dhrishti` creates the history API Python environment and installs its packages on first run, and installs the frontend npm packages if `frontend/node_modules` is missing. Go dependencies are fetched from `go.mod` when Go builds the engine. Docker builds the mock service images the first time Compose starts.
 
-**What each Redis feature powers**
+## What the mock services do
 
-| Feature | Redis commands | Used by |
-|---------|----------------|---------|
-| Metric charts (Timeline) | `TS.ADD`, `TS.RANGE` | Go writer + History API |
-| Graph replay snapshots | `SET`, `ZADD` | Go writer + History API |
-| Service list | `SADD`, `SMEMBERS` | Go writer + History API |
+The stack in `mock_services/` models a flash-sale storefront. The API gateway is the only service published to the host, on port 8080; the other 14 services talk over a private Docker Compose network. The services are separate Python applications with health checks, and Compose waits for required dependencies before marking the gateway ready.
 
-### 4. Verify
+The gateway routes browse, search, flash-sale, cart, and order requests. Those requests fan out to services such as product catalog, inventory, pricing, authentication, payment, shipping, and notifications. The shared `mock_services/common/` code supplies HTTP helpers, latency behavior, and health endpoints. The stack includes simulated latency and some failure behavior so the graph has realistic request paths; it is a demo workload, not a production commerce system. The service list and routes are in [docs/MOCK_SERVICES.md](./docs/MOCK_SERVICES.md).
+
+## How Dhrishti works
+
+The eBPF programs observe TCP connection events in the Linux kernel. The Go engine reads those events, correlates connection lifecycle data into flows, and asks Docker for container metadata so it can label IPs and ports with service names. It maintains the live dependency graph and exposes it over HTTP and WebSockets. The React frontend renders the graph with Cytoscape.js.
+
+Redis Stack stores periodic graph snapshots and metric history. The separate FastAPI process serves that history to the frontend for Timeline and Replay. The main pieces are `ebpf/` for probes, `loader/` for event collection and flow processing, `resolver/` for container identity, `api/` for the live API, `history/` and `history-api/` for stored data, and `frontend/` for the UI.
+
+The repository's `dhrishti.json` names `api-gateway` as the entry service. This lets Dhrishti identify the gateway as the first application hop from outside the Compose network.
+
+## Commands and tuning
 
 ```bash
-cd mock_services && docker compose up --build    # terminal 1
-make dhrishti                                     # terminal 2 (Ctrl+C to stop)
-make run-simulation DURATION=4m VIRTUAL_USERS=150 # terminal 3
+make help
+make ebpf
+make dhrishti
+make stop-dhrishti
+make run-simulation DURATION=2m VIRTUAL_USERS=15
 ```
 
-`make dhrishti` automatically:
-
-- builds eBPF probes if missing (`make ebpf`)
-- creates `history-api/.venv` and installs Python deps
-- runs `npm install` in `frontend/` if `node_modules/` is missing
-- starts the Go engine (sudo), History API, and Vite dev server
-
-Logs: `.dhrishti/logs/` (gitignored).
-
----
-
-## Makefile commands
+The simulation defaults to four minutes and 200 VUs, so set the values explicitly for a short interview demo. `DURATION` accepts seconds, minutes, or hours; `VIRTUAL_USERS` sets the peak load. The client-IP fleet follows that number up to 20 addresses. Set `CONNECTING_IPS` to override it, for example:
 
 ```bash
-make help              # list all targets
-make ebpf              # build eBPF probes only
-make dhrishti          # start engine + history API + frontend
-make stop-dhrishti     # kill background Dhrishti processes
-make run-simulation    # k6 load against mock stack (Dhrishti must be running)
+make run-simulation DURATION=2m VIRTUAL_USERS=15 CONNECTING_IPS=5
 ```
 
-Simulation tunables:
+For a longer baseline-versus-observed benchmark, see [docs/BENCHMARK.md](./docs/BENCHMARK.md). Note that k6 measures HTTP request latency, while Dhrishti measures TCP connection lifetime; those latency numbers describe different things and should not be compared directly.
 
-```bash
-make run-simulation DURATION=15m VIRTUAL_USERS=200 CONNECTING_IPS=10
-```
+## Common issues
 
----
-
-## Documentation
-
-| Doc | Contents |
-|-----|----------|
-| [docs/MOCK_SERVICES.md](./docs/MOCK_SERVICES.md) | 15-service stack architecture, API routes, Docker usage |
-| [docs/BENCHMARK.md](./docs/BENCHMARK.md) | k6 load tests, A/B benchmark workflow, metric comparison |
-
----
-
-## Overview
-
-Dhrishti is a Linux-based observability system that infers service dependencies by tracing live TCP activity directly from the kernel using eBPF.
-
-Instead of relying on manually maintained architecture diagrams, application-level tracing instrumentation, or predefined service topology, Dhrishti observes actual runtime behavior and reconstructs communication relationships dynamically.
-
-The system captures kernel-level TCP lifecycle events, correlates them into runtime flows, enriches them with container metadata, and exposes a live dependency graph of the running system.
-
----
-
-## Architecture
-
-```text
-Docker Workloads
-        ↓
-eBPF Kernel Probes
-        ↓
-Ring Buffer Telemetry
-        ↓
-Go Runtime Collector
-        ↓
-Flow Correlation Engine
-        ↓
-Runtime Graph State
-        ↓
-WebSocket Streaming + Redis History
-        ↓
-React / Cytoscape.js Visualization
-```
-
----
-
-## Runtime model
-
-The Linux kernel only exposes low-level primitives such as processes, sockets, IP addresses, ports, and TCP state.
-
-Dhrishti converts these into architectural relationships:
-
-```text
-api-gateway → auth-service
-api-gateway → flash-sale-service → inventory-service
-order-service → payment-service
-```
-
----
-
-## eBPF probes
-
-| Probe | Purpose |
-|-------|---------|
-| `tcp_connect` | Outbound connection attempts — foundation of dependency inference |
-| `inet_csk_accept` | Server-side accept — client/server correlation |
-| `tcp_close` | Connection teardown — duration, churn, short-lived flows |
-| `tcp_state` | State transitions (ESTABLISHED, FIN_WAIT, TIME_WAIT) |
-
----
-
-## Current features
-
-* Live TCP dependency inference
-* Docker-aware service resolution
-* Runtime flow tracking and rolling latency (P95)
-* WebSocket-based graph streaming
-* Live Cytoscape visualization with timeline replay
-* Redis TimeSeries history (metrics + graph snapshots every ~10s)
-
----
-
-## Example test architecture
-
-Dhrishti is tested against a **flash-sale e-commerce** mock stack with **15 microservices**:
-
-```text
-k6 (host) → api-gateway
-                ├→ auth-service, user-service, analytics-service
-                ├→ product-catalog ← search-service, recommendation-service
-                ├→ flash-sale-service → inventory-service, pricing-service
-                ├→ cart-service → inventory-service
-                └→ order-service → payment, shipping, notification
-```
-
-Entry service config (`dhrishti.json`):
-
-```json
-{ "entry_services": ["api-gateway"] }
-```
-
----
-
-## Tech stack
-
-| Layer | Technology |
-|-------|------------|
-| Kernel instrumentation | eBPF (C) |
-| Telemetry engine | Go |
-| Runtime metadata | Docker Engine API |
-| History store | Redis TimeSeries |
-| History API | FastAPI |
-| Frontend | React + Cytoscape.js |
-| Streaming | WebSockets |
-
----
-
-## Full A/B benchmark
-
-For a formal baseline vs Dhrishti-ON comparison (not the quick simulation):
-
-```bash
-cd benchmark && ./baseline.sh              # Dhrishti OFF
-make dhrishti                               # other terminal
-cd benchmark && sudo ./benchmark.sh        # Dhrishti ON + report
-```
-
-See [docs/BENCHMARK.md](./docs/BENCHMARK.md) for methodology.
-
----
-
-## Troubleshooting
-
-| Symptom | Fix |
-|---------|-----|
-| `Redis not reachable` | Start Redis Stack on `:6379` (see section 3 above) |
-| Timeline "Failed to load timeline data" | Redis missing TimeSeries — run `redis-cli TS.INFO __probe__`; if `unknown command`, switch to Redis Stack |
-| `[history] TS.CREATE ... unknown command` in engine log | Same as above — replace plain Redis/Valkey with Redis Stack |
-| `eBPF probes not built` | `make ebpf` |
-| Frontend blank / module errors | `cd frontend && npm install` |
-| History API 404 on timeline | Restart `make dhrishti` after pulling changes |
-| Simulation timeouts | Lower `VIRTUAL_USERS` (try 150–200) |
-| No timeline data | Dhrishti must run during the simulated window; snapshots every ~10s |
+If `make ebpf` cannot find `vmlinux.h`, confirm that `bpftool` is installed and `/sys/kernel/btf/vmlinux` exists. If that BTF file is missing, use a kernel build with `CONFIG_DEBUG_INFO_BTF` enabled. If probe compilation cannot find `bpf/bpf_helpers.h`, install the libbpf development headers. If the live graph works but Timeline has no data, check that Redis Stack is running at the URL in `.env` and that `TS.INFO` is recognized. If the frontend does not start, install Node.js/npm and run `npm install` in `frontend/`. If the mock stack is still starting, wait for Compose health checks and confirm `curl http://localhost:8080/health` succeeds before starting the simulation.

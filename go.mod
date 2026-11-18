@@ -3,9 +3,10 @@ module dhrishti
 go 1.26.2
 
 require (
-	github.com/cilium/ebpf v0.21.0
+	github.com/cilium/ebpf v0.22.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/moby/moby/client v0.1.0-beta.0
+	github.com/redis/go-redis/v9 v9.20.0
 )
 
 require (
@@ -23,12 +24,11 @@ require (
 	github.com/moby/moby/api v1.52.0-beta.1 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
-	github.com/redis/go-redis/v9 v9.20.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.60.0 // indirect
 	go.opentelemetry.io/otel v1.35.0 // indirect
 	go.opentelemetry.io/otel/metric v1.35.0 // indirect
 	go.opentelemetry.io/otel/trace v1.35.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	golang.org/x/sys v0.37.0 // indirect
+	golang.org/x/sys v0.43.0 // indirect
 )

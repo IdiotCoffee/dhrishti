@@ -2,9 +2,9 @@ import React, { useMemo, useRef, useState } from "react";
 
 import { FONT, chartColors, panel } from "./styles";
 
-const W = 720;
-const H = 200;
-const PAD = { top: 16, right: 16, bottom: 28, left: 48 };
+const W = 900;
+const H = 300;
+const PAD = { top: 20, right: 20, bottom: 34, left: 58 };
 
 function formatTime(ms) {
   return new Date(ms).toLocaleString([], {
@@ -27,22 +27,38 @@ function formatValue(metric, value) {
   return value < 10 ? value.toFixed(2) : value.toFixed(1);
 }
 
-function nearestPoint(series, plot, svgX) {
-  const targetMs = plot.minX + ((svgX - PAD.left) / plot.innerW) * (plot.maxX - plot.minX);
+function nearestLinePoint(series, plot, svgX, svgY) {
   let best = null;
 
-  series.forEach((s, seriesIdx) => {
-    s.points.forEach((p) => {
-      const dist = Math.abs(p[0] - targetMs);
-      if (!best || dist < best.dist) {
+  series.forEach((item, seriesIndex) => {
+    const color = chartColors[seriesIndex % chartColors.length];
+    const points = item.points ?? [];
+    const segments = points.length === 1 ? [[points[0], points[0]]] : points.slice(1).map((point, index) => [points[index], point]);
+
+    segments.forEach(([a, b]) => {
+      const ax = plot.xScale(a[0]);
+      const ay = plot.yScale(a[1]);
+      const bx = plot.xScale(b[0]);
+      const by = plot.yScale(b[1]);
+      const dx = bx - ax;
+      const dy = by - ay;
+      const lengthSquared = dx * dx + dy * dy;
+      const t = lengthSquared === 0
+        ? 0
+        : Math.max(0, Math.min(1, ((svgX - ax) * dx + (svgY - ay) * dy) / lengthSquared));
+      const x = ax + t * dx;
+      const y = ay + t * dy;
+      const distance = Math.hypot(svgX - x, svgY - y);
+
+      if (!best || distance < best.distance) {
         best = {
-          dist,
-          service: s.service,
-          value: p[1],
-          ms: p[0],
-          color: chartColors[seriesIdx % chartColors.length],
-          x: plot.xScale(p[0]),
-          y: plot.yScale(p[1]),
+          distance,
+          service: item.service,
+          value: a[1] + t * (b[1] - a[1]),
+          ms: a[0] + t * (b[0] - a[0]),
+          color,
+          x,
+          y,
         };
       }
     });
@@ -51,154 +67,129 @@ function nearestPoint(series, plot, svgX) {
   return best;
 }
 
-export default function TimeSeriesChart({
-  series,
-  metric,
-  metricLabel,
-  scrubMs,
-  onScrub,
-  onHoverMs,
-}) {
+export default function TimeSeriesChart({ series, metric, metricLabel }) {
   const svgRef = useRef(null);
   const [hover, setHover] = useState(null);
 
   const plot = useMemo(() => {
-    const allPoints = series.flatMap((s) => s.points);
+    const allPoints = series.flatMap((item) => item.points ?? []);
     if (!allPoints.length) return null;
 
-    const xs = allPoints.map((p) => p[0]);
-    const ys = allPoints.map((p) => p[1]);
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const maxY = Math.max(...ys, 0.001);
-
+    const minX = Math.min(...allPoints.map((point) => point[0]));
+    const maxX = Math.max(...allPoints.map((point) => point[0]));
+    const maxY = Math.max(...allPoints.map((point) => point[1]), 0.001);
     const innerW = W - PAD.left - PAD.right;
     const innerH = H - PAD.top - PAD.bottom;
-
+    const baseline = PAD.top + innerH;
     const xScale = (x) => PAD.left + ((x - minX) / (maxX - minX || 1)) * innerW;
     const yScale = (y) => PAD.top + innerH - (y / maxY) * innerH;
 
-    const paths = series.map((s, i) => {
-      if (!s.points.length) return null;
-      const d = s.points
-        .map((p, idx) => `${idx === 0 ? "M" : "L"} ${xScale(p[0]).toFixed(1)} ${yScale(p[1]).toFixed(1)}`)
+    const paths = series.map((item, index) => {
+      const points = item.points ?? [];
+      if (!points.length) return null;
+      const linePath = points
+        .map((point, pointIndex) => `${pointIndex === 0 ? "M" : "L"} ${xScale(point[0]).toFixed(2)} ${yScale(point[1]).toFixed(2)}`)
         .join(" ");
-      return { service: s.service, d, color: chartColors[i % chartColors.length], points: s.points };
+      const first = points[0];
+      const last = points[points.length - 1];
+      return {
+        service: item.service,
+        points,
+        color: chartColors[index % chartColors.length],
+        gradientId: `series-area-${index}`,
+        linePath,
+        areaPath: `${linePath} L ${xScale(last[0]).toFixed(2)} ${baseline} L ${xScale(first[0]).toFixed(2)} ${baseline} Z`,
+      };
     }).filter(Boolean);
 
-    return { paths, minX, maxX, maxY, xScale, yScale, innerW, innerH };
+    return { paths, minX, maxX, maxY, xScale, yScale, innerW, innerH, baseline };
   }, [series]);
 
-  const handleMouseMove = (evt) => {
+  const handleMouseMove = (event) => {
     if (!plot || !svgRef.current) return;
     const rect = svgRef.current.getBoundingClientRect();
-    const svgX = ((evt.clientX - rect.left) / rect.width) * W;
-    if (svgX < PAD.left || svgX > PAD.left + plot.innerW) {
+    const svgX = ((event.clientX - rect.left) / rect.width) * W;
+    const svgY = ((event.clientY - rect.top) / rect.height) * H;
+    if (svgX < PAD.left || svgX > PAD.left + plot.innerW || svgY < PAD.top || svgY > plot.baseline) {
       setHover(null);
       return;
     }
 
-    const point = nearestPoint(series, plot, svgX);
+    const point = nearestLinePoint(series, plot, svgX, svgY);
     if (!point) return;
-
     setHover(point);
-    if (onHoverMs) onHoverMs(point.ms);
-  };
-
-  const handleMouseLeave = () => {
-    setHover(null);
   };
 
   if (!plot) {
     return (
-      <div
-        style={{
-          ...panel,
-          padding: 24,
-          fontFamily: FONT,
-          fontSize: 12,
-          color: "#94a3b8",
-          textAlign: "center",
-        }}
-      >
+      <div style={{ ...panel, padding: 24, fontFamily: FONT, fontSize: 12, color: "#94a3b8", textAlign: "center" }}>
         No data in this range — run a simulation while Dhrishti is up
       </div>
     );
   }
 
-  const scrubX = scrubMs != null ? plot.xScale(scrubMs) : null;
-
   return (
-    <div style={{ ...panel, padding: "12px 14px", fontFamily: FONT, position: "relative" }}>
-      <div style={{ fontSize: 11, color: "#64748b", marginBottom: 8 }}>
+    <div style={{ ...panel, padding: "14px 16px", fontFamily: FONT, position: "relative" }}>
+      <div style={{ fontSize: 12, color: "#475569", marginBottom: 8, fontWeight: 500 }}>
         {metricLabel || metric}
       </div>
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
-        style={{ width: "100%", height: "auto", display: "block", cursor: "crosshair" }}
+        style={{ width: "100%", height: "auto", display: "block", cursor: "crosshair", overflow: "visible" }}
         role="img"
         aria-label="Time series chart"
         onMouseMove={handleMouseMove}
-        onMouseLeave={handleMouseLeave}
+        onMouseLeave={() => setHover(null)}
       >
-        <line
-          x1={PAD.left}
-          y1={PAD.top + plot.innerH}
-          x2={PAD.left + plot.innerW}
-          y2={PAD.top + plot.innerH}
-          stroke="#e2e8f0"
-        />
-        <line
-          x1={PAD.left}
-          y1={PAD.top}
-          x2={PAD.left}
-          y2={PAD.top + plot.innerH}
-          stroke="#e2e8f0"
-        />
-        <text x={PAD.left} y={H - 6} fontSize={10} fill="#94a3b8">
-          {formatShortTime(plot.minX)}
-        </text>
-        <text x={PAD.left + plot.innerW} y={H - 6} fontSize={10} fill="#94a3b8" textAnchor="end">
-          {formatShortTime(plot.maxX)}
-        </text>
-        <text x={PAD.left - 6} y={PAD.top + 4} fontSize={10} fill="#94a3b8" textAnchor="end">
-          {formatValue(metric, plot.maxY)}
-        </text>
-        {plot.paths.map((p) => (
+        <defs>
+          {plot.paths.map((path) => (
+            <linearGradient key={path.gradientId} id={path.gradientId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={path.color} stopOpacity="0.16" />
+              <stop offset="100%" stopColor={path.color} stopOpacity="0.005" />
+            </linearGradient>
+          ))}
+        </defs>
+
+        {[0, 0.25, 0.5, 0.75, 1].map((fraction) => {
+          const y = PAD.top + plot.innerH * fraction;
+          const value = plot.maxY * (1 - fraction);
+          return (
+            <g key={fraction}>
+              <line x1={PAD.left} y1={y} x2={PAD.left + plot.innerW} y2={y} stroke="#eef2f7" strokeWidth="1" />
+              <text x={PAD.left - 10} y={y + 3} fontSize="10" fill="#94a3b8" textAnchor="end">
+                {formatValue(metric, value)}
+              </text>
+            </g>
+          );
+        })}
+
+        {plot.paths.map((path) => (
+          <path key={`${path.service}-area`} d={path.areaPath} fill={`url(#${path.gradientId})`} stroke="none" />
+        ))}
+        {plot.paths.map((path) => (
           <path
-            key={p.service}
-            d={p.d}
+            key={path.service}
+            d={path.linePath}
             fill="none"
-            stroke={p.color}
-            strokeWidth={2}
+            stroke={path.color}
+            strokeWidth="1.7"
             strokeLinejoin="round"
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
           />
         ))}
+
+        <text x={PAD.left} y={H - 8} fontSize="10" fill="#94a3b8">{formatShortTime(plot.minX)}</text>
+        <text x={PAD.left + plot.innerW} y={H - 8} fontSize="10" fill="#94a3b8" textAnchor="end">
+          {formatShortTime(plot.maxX)}
+        </text>
+
         {hover && (
           <>
-            <line
-              x1={hover.x}
-              y1={PAD.top}
-              x2={hover.x}
-              y2={PAD.top + plot.innerH}
-              stroke="#94a3b8"
-              strokeWidth={1}
-              strokeDasharray="3 3"
-            />
-            <circle cx={hover.x} cy={hover.y} r={4} fill={hover.color} stroke="#fff" strokeWidth={1.5} />
+            <line x1={hover.x} y1={PAD.top} x2={hover.x} y2={plot.baseline} stroke="#94a3b8" strokeWidth="1" strokeDasharray="3 4" />
+            <circle cx={hover.x} cy={hover.y} r="4" fill={hover.color} stroke="#fff" strokeWidth="2" />
           </>
-        )}
-        {scrubX != null && scrubX >= PAD.left && scrubX <= PAD.left + plot.innerW && (
-          <line
-            x1={scrubX}
-            y1={PAD.top}
-            x2={scrubX}
-            y2={PAD.top + plot.innerH}
-            stroke="#1e293b"
-            strokeWidth={1.5}
-            opacity={0.6}
-          />
         )}
       </svg>
 
@@ -206,8 +197,8 @@ export default function TimeSeriesChart({
         <div
           style={{
             position: "absolute",
-            left: 14,
-            top: 36,
+            left: 18,
+            top: 40,
             fontSize: 11,
             lineHeight: 1.5,
             color: "#334155",
@@ -225,25 +216,14 @@ export default function TimeSeriesChart({
         </div>
       )}
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 8 }}>
-        {plot.paths.map((p) => (
-          <span key={p.service} style={{ fontSize: 11, color: "#475569", display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ width: 10, height: 2, background: p.color, borderRadius: 1 }} />
-            {p.service}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginTop: 10 }}>
+        {plot.paths.map((path) => (
+          <span key={path.service} style={{ fontSize: 11, color: "#475569", display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 14, height: 2, background: path.color, borderRadius: 1 }} />
+            {path.service}
           </span>
         ))}
       </div>
-      {onScrub && (
-        <input
-          type="range"
-          min={plot.minX}
-          max={plot.maxX}
-          value={scrubMs ?? plot.minX}
-          onChange={(e) => onScrub(Number(e.target.value))}
-          style={{ width: "100%", marginTop: 10, accentColor: "#3b82f6" }}
-          aria-label="Timeline position"
-        />
-      )}
     </div>
   );
 }

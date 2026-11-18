@@ -83,7 +83,7 @@ Tunables (override on the command line):
 |----------|---------|---------|
 | `DURATION` | `4m` | `15m`, `1h`, `300s` |
 | `VIRTUAL_USERS` | `200` | `400` (keep ≤ 250 unless you know the stack can handle it) |
-| `CONNECTING_IPS` | auto | `10` distinct client IPs on the docker bridge |
+| `CONNECTING_IPS` | follows VUs, capped at 20 | `10` distinct client IPs on the docker bridge |
 
 Run `make help` for a summary.
 
